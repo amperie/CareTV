@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@caretv/config": ["packages/config/dist/index.d.ts"],
+      "@caretv/core": ["packages/core/dist/index.d.ts"]
+    }
+  }
+}
