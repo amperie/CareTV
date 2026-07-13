@@ -22,6 +22,90 @@ Real streaming-service automation is not implemented yet. The current playback p
 fake playback used to prove queue orchestration, remote appliance polling, state reporting, and
 dashboard controls.
 
+## Architecture
+
+CareTV is split into a control plane and an appliance runtime. The control plane owns the dashboard,
+API, queue, commands, appliance heartbeat, and SQLite database. The appliance runtime polls the
+control plane, claims queued work, runs playback locally, and reports state/events back.
+
+```mermaid
+flowchart LR
+  subgraph Operator["Family / Operator Device"]
+    Browser["Web browser"]
+  end
+
+  subgraph Control["CareTV Control Plane"]
+    Web["apps/web\nReact dashboard"]
+    Server["apps/server\nFastify API"]
+    DB[("SQLite\nmedia, queue, commands,\nevents, settings, appliances")]
+  end
+
+  subgraph Appliance["TV Appliance / Mini-PC"]
+    ApplianceAgent["apps/appliance-agent\npolling runtime"]
+    Adapter["Fake adapter today\nlocal/streaming adapters later"]
+    Display["TV output"]
+  end
+
+  subgraph Shared["Shared Workspace Packages"]
+    Core["@caretv/core\ndomain types"]
+    Config["@caretv/config\nenv/runtime paths"]
+    Database["@caretv/database\nrepositories + migrations"]
+    State["@caretv/state-machine\nplayback transitions"]
+    Adapters["@caretv/adapters\nadapter contract + fake adapter"]
+    Playback["@caretv/playback-agent\nin-process fake runner"]
+  end
+
+  Browser --> Web
+  Web --> Server
+  Server <--> DB
+  ApplianceAgent -->|polls playback settings,\nclaims queue items,\nfetches commands/media| Server
+  ApplianceAgent -->|heartbeats,\nstate, events,\nqueue status| Server
+  ApplianceAgent --> Adapter
+  Adapter --> Display
+
+  Server -.uses.-> Config
+  Server -.uses.-> Database
+  Server -.uses.-> Core
+  ApplianceAgent -.uses.-> Core
+  ApplianceAgent -.uses.-> Config
+  ApplianceAgent -.uses.-> State
+  ApplianceAgent -.uses.-> Adapters
+  Playback -.uses.-> Database
+  Playback -.uses.-> State
+  Playback -.uses.-> Adapters
+```
+
+### Runtime Flow
+
+1. The dashboard calls `apps/server` over `/api/v1` to create fake media, manage the queue, start or
+   stop playback, toggle loop mode, and issue commands.
+2. The server persists media, queue entries, playback commands, appliance heartbeats, and events in
+   SQLite through `@caretv/database`.
+3. `apps/appliance-agent` polls the server for playback settings. When playback is enabled, it claims
+   the next queued entry and fetches the media item.
+4. The appliance selects an adapter. Today that is the deterministic fake adapter in
+   `@caretv/adapters`; later this boundary is where local media, YouTube, Prime, or other browser
+   adapters plug in.
+5. The appliance uses `@caretv/state-machine` to turn observations and commands into explicit
+   playback states, then reports heartbeats/events/status updates back to the server.
+6. The dashboard reads `/api/v1/playback/status` to show queue state, appliance state, and recent
+   events.
+
+### Package Responsibilities
+
+- `apps/server`: local Fastify API, CORS handling for the dashboard, SQLite ownership, operator
+  endpoints, and appliance polling endpoints.
+- `apps/web`: browser dashboard for the fake playback lab.
+- `apps/appliance-agent`: polling process intended to run on the TV-connected appliance.
+- `apps/agent`: older local placeholder entry point retained while the appliance runtime evolves.
+- `apps/watchdog`: placeholder for process health checks and restart behavior.
+- `@caretv/core`: shared domain types and health helpers.
+- `@caretv/config`: environment loading, validation, path normalization, and redacted config output.
+- `@caretv/database`: SQLite migrations and repositories.
+- `@caretv/adapters`: playback adapter contract plus deterministic fake adapter.
+- `@caretv/state-machine`: allowed playback transitions and event generation.
+- `@caretv/playback-agent`: in-process fake playback runner used by the server-side prototype path.
+
 ## Requirements
 
 - Windows 11 for the target development VM
