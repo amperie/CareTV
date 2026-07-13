@@ -23,8 +23,12 @@ async function main(): Promise<void> {
   );
 
   for (;;) {
-    await heartbeat();
-    const playback = await client.playbackSettings();
+    const playback = await pollPlaybackSettings();
+
+    if (!playback) {
+      await sleep(config.values.appliancePollMs);
+      continue;
+    }
 
     if (!playback.enabled) {
       await sleep(config.values.appliancePollMs);
@@ -39,6 +43,24 @@ async function main(): Promise<void> {
     }
 
     await play(queueEntry, playback.loopEnabled);
+  }
+}
+
+async function pollPlaybackSettings(): Promise<
+  { enabled: boolean; loopEnabled: boolean } | undefined
+> {
+  try {
+    await heartbeat();
+    return await client.playbackSettings();
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Server unavailable; retrying.",
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+    return undefined;
   }
 }
 
@@ -346,12 +368,20 @@ class ServerClient {
     path: string,
     body?: Record<string, unknown>
   ): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      method,
-      ...(body
-        ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } }
-        : {})
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method,
+        ...(body
+          ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } }
+          : {})
+      });
+    } catch (error) {
+      throw new Error(
+        `${method} ${path} failed: ${error instanceof Error ? error.message : "network error"}`
+      );
+    }
 
     if (!response.ok) {
       throw new Error(`${method} ${path} failed with ${response.status}`);
