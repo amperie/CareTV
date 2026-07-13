@@ -126,6 +126,17 @@ app.post("/api/v1/fake-queue", (request, reply) => {
 
 app.post("/api/v1/playback/start", () => playback.start());
 app.post("/api/v1/playback/stop", () => playback.stop());
+app.post("/api/v1/lab/reset", () => {
+  const status = playback.reset();
+  db.exec(`
+    DELETE FROM playback_events;
+    DELETE FROM playback_commands;
+    DELETE FROM playback_sessions;
+    DELETE FROM queue_entries;
+    DELETE FROM media_items;
+  `);
+  return { reset: true, ...status };
+});
 
 app.post("/api/v1/commands", (request, reply) => {
   const body = parseBody(request.body);

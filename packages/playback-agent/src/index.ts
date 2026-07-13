@@ -140,6 +140,11 @@ export class PlaybackAgent {
         continue;
       }
 
+      if (!canApplyCommand(command.type, this.state.phase)) {
+        this.options.commands.updateStatus(command.id, "failed");
+        continue;
+      }
+
       const result = await this.applyCommand(queueEntryId, adapter, context, command);
       this.options.commands.updateStatus(command.id, result ? "completed" : "accepted");
 
@@ -288,6 +293,20 @@ function playingEvent(observation: PlaybackObservation): PlaybackStateEvent {
       : {}),
     ...(observation.fullscreen !== undefined ? { fullscreen: observation.fullscreen } : {})
   };
+}
+
+function canApplyCommand(command: PlaybackCommand["type"], phase: PlaybackState["phase"]): boolean {
+  switch (command) {
+    case "pause":
+      return phase === "playing" || phase === "buffering";
+    case "resume":
+      return phase === "paused";
+    case "skip":
+    case "stop":
+      return !["idle", "failed"].includes(phase);
+    default:
+      return false;
+  }
 }
 
 function sleep(milliseconds: number): Promise<void> {

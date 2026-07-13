@@ -64,7 +64,7 @@ export function transition(
     event: {
       id: options.createId(),
       type: event.type,
-      details: { from: current.phase, to: state.phase },
+      details: eventDetails(current.phase, state.phase, event),
       createdAt: timestamp,
       ...(state.queueEntryId ? { queueEntryId: state.queueEntryId } : {}),
       ...(state.mediaItemId ? { mediaItemId: state.mediaItemId } : {})
@@ -182,6 +182,24 @@ function withoutError(state: PlaybackState): PlaybackState {
   const next = { ...state };
   delete next.error;
   return next;
+}
+
+function eventDetails(
+  from: PlaybackPhase,
+  to: PlaybackPhase,
+  event: PlaybackStateEvent
+): Record<string, unknown> {
+  if (event.type === "FAILED") {
+    return {
+      from,
+      to,
+      code: event.code,
+      message: event.message,
+      ...(event.details ? { details: event.details } : {})
+    };
+  }
+
+  return { from, to };
 }
 
 const allowedTransitions: Record<PlaybackPhase, ReadonlySet<PlaybackStateEvent["type"]>> = {

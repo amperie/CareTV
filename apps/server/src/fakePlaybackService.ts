@@ -48,6 +48,13 @@ export class FakePlaybackService {
     return this.status();
   }
 
+  public reset(): PlaybackServiceStatus {
+    this.running = false;
+    this.lastResult = undefined;
+    this.state = undefined;
+    return this.status();
+  }
+
   public status(): PlaybackServiceStatus {
     return {
       running: this.running,

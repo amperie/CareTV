@@ -18,6 +18,7 @@ interface QueueEntry {
   position: number;
   status: string;
   lastErrorCode?: string;
+  lastErrorMessage?: string;
 }
 
 interface PlaybackEvent {
@@ -81,6 +82,11 @@ function App() {
     await refresh();
   }
 
+  async function resetLab() {
+    await post("/lab/reset", {});
+    await refresh();
+  }
+
   async function sendCommand(type: "pause" | "resume" | "skip") {
     await post("/commands", { type });
     await refresh();
@@ -132,6 +138,9 @@ function App() {
             </select>
           </label>
           <button onClick={() => void addFakeItem()}>Add to queue</button>
+          <button className="secondary" onClick={() => void resetLab()}>
+            Reset lab
+          </button>
         </div>
 
         <div className="panel output">
@@ -171,7 +180,15 @@ function App() {
                 <div className="row" key={entry.id}>
                   <div>
                     <strong>{mediaById.get(entry.mediaItemId)?.title ?? entry.mediaItemId}</strong>
-                    <span>#{entry.position}</span>
+                    <span>
+                      #{entry.position} · {scenarioLabel(mediaById.get(entry.mediaItemId))}
+                    </span>
+                    {entry.lastErrorCode ? (
+                      <small>
+                        {entry.lastErrorCode}
+                        {entry.lastErrorMessage ? `: ${entry.lastErrorMessage}` : ""}
+                      </small>
+                    ) : null}
                   </div>
                   <span className={`badge ${entry.status}`}>{entry.status}</span>
                 </div>
@@ -191,6 +208,7 @@ function App() {
                 <strong>{event.type}</strong>
                 <code>
                   {formatDetail(event.details.from)} -&gt; {formatDetail(event.details.to)}
+                  {event.type === "FAILED" ? ` (${formatDetail(event.details.code)})` : ""}
                 </code>
               </div>
             ))}
@@ -217,6 +235,11 @@ function formatDetail(value: unknown): string {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
     ? String(value)
     : "?";
+}
+
+function scenarioLabel(item: MediaItem | undefined): string {
+  const scenario = item?.metadata.scenario;
+  return typeof scenario === "string" ? scenario : "unknown";
 }
 
 const root = document.getElementById("root");

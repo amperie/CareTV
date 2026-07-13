@@ -40,6 +40,15 @@ button:hover {
   background: #1c5543;
 }
 
+button.secondary {
+  background: #dde5ea;
+  color: #24323d;
+}
+
+button.secondary:hover {
+  background: #cbd6dd;
+}
+
 input,
 select {
   background: #fff;
@@ -228,8 +237,14 @@ label {
 }
 
 .row span,
-.muted {
+.muted,
+small {
   color: #60717e;
+}
+
+small {
+  font-size: 0.78rem;
+  line-height: 1.3;
 }
 
 .badge {

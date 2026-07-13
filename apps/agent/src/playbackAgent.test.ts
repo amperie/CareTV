@@ -58,6 +58,21 @@ describe("PlaybackAgent", () => {
       expect(harness.queue.get("queue-1")).toMatchObject({ status: "skipped" });
     });
   });
+
+  it("rejects a stale pause command before playback starts", async () => {
+    await withHarness(async (harness) => {
+      harness.media.create(fakeMedia({ durationSeconds: 2 }));
+      harness.queue.enqueue(fakeQueueEntry());
+      harness.commands.create(fakeCommand("pause"));
+
+      expect(await harness.agent.runOnce()).toEqual({
+        status: "completed",
+        queueEntryId: "queue-1"
+      });
+      expect(harness.commands.listPending()).toEqual([]);
+      expect(harness.queue.get("queue-1")).toMatchObject({ status: "completed" });
+    });
+  });
 });
 
 async function withHarness(test: (harness: Harness) => Promise<void>): Promise<void> {

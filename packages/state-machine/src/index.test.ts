@@ -56,7 +56,7 @@ describe("playback state machine", () => {
   });
 
   it("records failure details", () => {
-    const state = transition(
+    const result = transition(
       {
         ...createIdleState(date),
         phase: "playing",
@@ -65,11 +65,17 @@ describe("playback state machine", () => {
       },
       { type: "FAILED", code: "adapter-error", message: "Adapter failed" },
       options
-    ).state;
+    );
 
-    expect(state).toMatchObject({
+    expect(result.state).toMatchObject({
       phase: "failed",
       error: { code: "adapter-error", message: "Adapter failed" }
+    });
+    expect(result.event.details).toMatchObject({
+      from: "playing",
+      to: "failed",
+      code: "adapter-error",
+      message: "Adapter failed"
     });
   });
 
