@@ -85,6 +85,10 @@ export class QueueRepository {
       lastErrorMessage?: string;
     } = {}
   ): void {
+    if (isActiveStatus(status) && this.get(id)) {
+      this.reconcileOtherActive(id, "failed", "superseded-by-active-playback");
+    }
+
     this.db
       .prepare(
         `
@@ -118,6 +122,20 @@ export class QueueRepository {
         "DELETE FROM queue_entries WHERE status IN ('completed', 'failed', 'skipped', 'cancelled')"
       )
       .run();
+
+    return Number(result.changes);
+  }
+
+  private reconcileOtherActive(id: string, status: QueueEntryStatus, errorCode: string): number {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET status = ?, last_error_code = ?
+          WHERE id != ? AND status IN ('starting', 'playing', 'paused')
+        `
+      )
+      .run(status, errorCode, id);
 
     return Number(result.changes);
   }
@@ -199,6 +217,10 @@ export class QueueRepository {
 
     return row?.position ?? 1;
   }
+}
+
+function isActiveStatus(status: QueueEntryStatus): boolean {
+  return status === "starting" || status === "playing" || status === "paused";
 }
 
 function mapQueueRow(row: QueueRow): QueueEntry {

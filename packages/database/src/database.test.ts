@@ -64,6 +64,38 @@ describe("database repositories", () => {
     });
   });
 
+  it("supersedes stale active entries when a new entry reports active playback", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({ ...fakeQueueEntry("stale", "media-1", 1), status: "playing" });
+      queue.enqueue({ ...fakeQueueEntry("current", "media-1", 2), status: "starting" });
+
+      expect(() => queue.updateStatus("current", "playing")).not.toThrow();
+      expect(queue.get("stale")).toMatchObject({
+        status: "failed",
+        lastErrorCode: "superseded-by-active-playback"
+      });
+      expect(queue.get("current")).toMatchObject({ status: "playing" });
+    });
+  });
+
+  it("does not supersede active entries for missing queue ids", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({ ...fakeQueueEntry("active", "media-1", 1), status: "playing" });
+
+      queue.updateStatus("missing", "playing");
+
+      expect(queue.get("active")).toMatchObject({ status: "playing" });
+    });
+  });
+
   it("moves queued entries within the queued subset", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);
