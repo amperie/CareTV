@@ -116,7 +116,7 @@ describe("database repositories", () => {
       expect(queue.list()).toHaveLength(1);
       expect(queue.get("completed")).toMatchObject({
         status: "queued",
-        position: 2
+        position: 1
       });
       expect(queue.get("completed")?.completedAt).toBeUndefined();
       expect(queue.runnableCount()).toBe(1);

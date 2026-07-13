@@ -144,7 +144,6 @@ export class QueueRepository {
         `
           UPDATE queue_entries
           SET status = 'queued',
-              position = ?,
               started_at = NULL,
               completed_at = NULL,
               last_error_code = NULL,
@@ -152,7 +151,7 @@ export class QueueRepository {
           WHERE id = ? AND status IN ('completed', 'failed', 'skipped')
         `
       )
-      .run(this.nextPosition(), id);
+      .run(id);
 
     return Number(result.changes) > 0;
   }
