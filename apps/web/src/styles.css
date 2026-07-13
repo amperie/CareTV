@@ -49,6 +49,24 @@ button.secondary:hover {
   background: #cbd6dd;
 }
 
+button.toggle {
+  background: #dde5ea;
+  color: #24323d;
+}
+
+button.toggle.active {
+  background: #1d6f8b;
+  color: #fff;
+}
+
+button.toggle:hover {
+  background: #cbd6dd;
+}
+
+button.toggle.active:hover {
+  background: #185e76;
+}
+
 input,
 select {
   background: #fff;

@@ -19,12 +19,14 @@ interface FakePlaybackServiceOptions {
 
 export interface PlaybackServiceStatus {
   lastResult?: AgentRunResult;
+  loopEnabled: boolean;
   running: boolean;
   state?: PlaybackState;
 }
 
 export class FakePlaybackService {
   private lastResult: AgentRunResult | undefined;
+  private loopEnabled = false;
   private loop: Promise<void> | undefined;
   private running = false;
   private state: PlaybackState | undefined;
@@ -55,8 +57,14 @@ export class FakePlaybackService {
     return this.status();
   }
 
+  public setLoop(enabled: boolean): PlaybackServiceStatus {
+    this.loopEnabled = enabled;
+    return this.status();
+  }
+
   public status(): PlaybackServiceStatus {
     return {
+      loopEnabled: this.loopEnabled,
       running: this.running,
       ...(this.state ? { state: this.state } : {}),
       ...(this.lastResult ? { lastResult: this.lastResult } : {})
@@ -88,6 +96,33 @@ export class FakePlaybackService {
       }
 
       this.lastResult = result;
+
+      if (result.status === "completed" && this.loopEnabled) {
+        this.requeue(result.queueEntryId);
+      }
     }
+  }
+
+  private requeue(queueEntryId: string): void {
+    const entry = this.options.queue.get(queueEntryId);
+
+    if (!entry) {
+      return;
+    }
+
+    const item = this.options.media.get(entry.mediaItemId);
+
+    if (!item?.repeatable) {
+      return;
+    }
+
+    this.options.queue.enqueue({
+      id: crypto.randomUUID(),
+      mediaItemId: item.id,
+      position: this.options.queue.nextPosition(),
+      priority: entry.priority,
+      status: "queued",
+      attemptCount: 0
+    });
   }
 }

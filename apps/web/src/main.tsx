@@ -39,6 +39,7 @@ interface PlaybackState {
 
 interface PlaybackStatus {
   events: PlaybackEvent[];
+  loopEnabled: boolean;
   queue: QueueEntry[];
   running: boolean;
   state?: PlaybackState;
@@ -89,6 +90,11 @@ function App() {
 
   async function sendCommand(type: "pause" | "resume" | "skip") {
     await post("/commands", { type });
+    await refresh();
+  }
+
+  async function toggleLoop() {
+    await post("/playback/loop", { enabled: !status?.loopEnabled });
     await refresh();
   }
 
@@ -168,6 +174,12 @@ function App() {
             <button onClick={() => void sendCommand("pause")}>Pause</button>
             <button onClick={() => void sendCommand("resume")}>Resume</button>
             <button onClick={() => void sendCommand("skip")}>Skip</button>
+            <button
+              className={status?.loopEnabled ? "toggle active" : "toggle"}
+              onClick={() => void toggleLoop()}
+            >
+              Loop
+            </button>
             <button onClick={() => void stopPlayback()}>Stop</button>
           </div>
         </div>
@@ -181,7 +193,7 @@ function App() {
                   <div>
                     <strong>{mediaById.get(entry.mediaItemId)?.title ?? entry.mediaItemId}</strong>
                     <span>
-                      #{entry.position} · {scenarioLabel(mediaById.get(entry.mediaItemId))}
+                      #{entry.position} - {scenarioLabel(mediaById.get(entry.mediaItemId))}
                     </span>
                     {entry.lastErrorCode ? (
                       <small>

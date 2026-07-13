@@ -126,6 +126,10 @@ app.post("/api/v1/fake-queue", (request, reply) => {
 
 app.post("/api/v1/playback/start", () => playback.start());
 app.post("/api/v1/playback/stop", () => playback.stop());
+app.post("/api/v1/playback/loop", (request) => {
+  const body = parseBody(request.body);
+  return playback.setLoop(booleanField(body, "enabled", false));
+});
 app.post("/api/v1/lab/reset", () => {
   const status = playback.reset();
   db.exec(`
@@ -186,6 +190,11 @@ function fakeMetadata(body: Record<string, unknown>): Record<string, unknown> {
 function numberField(body: Record<string, unknown>, key: string, fallback: number): number {
   const value = body[key];
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function booleanField(body: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = body[key];
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function stringField(body: Record<string, unknown>, key: string, fallback: string): string {
