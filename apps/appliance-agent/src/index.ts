@@ -9,6 +9,7 @@ const config = loadConfig();
 const adapter = new FakeStreamingAdapter();
 let state: PlaybackState = createIdleState();
 let nextHeartbeatAt = 0;
+let backgroundHeartbeatInFlight = false;
 
 async function main(): Promise<void> {
   console.log(
@@ -18,9 +19,12 @@ async function main(): Promise<void> {
       serverUrl: config.values.serverUrl,
       pollMs: config.values.appliancePollMs,
       heartbeatMs: config.values.applianceHeartbeatMs,
-      playbackObserveMs: config.values.appliancePlaybackObserveMs
+      playbackObserveMs: config.values.appliancePlaybackObserveMs,
+      requestTimeoutMs: config.values.applianceRequestTimeoutMs
     })
   );
+
+  startBackgroundHeartbeat();
 
   for (;;) {
     try {
@@ -54,6 +58,34 @@ async function main(): Promise<void> {
       );
       await sleep(config.values.appliancePollMs);
     }
+  }
+}
+
+function startBackgroundHeartbeat(): void {
+  setInterval(() => {
+    void backgroundHeartbeat();
+  }, config.values.applianceHeartbeatMs).unref();
+  void backgroundHeartbeat();
+}
+
+async function backgroundHeartbeat(): Promise<void> {
+  if (backgroundHeartbeatInFlight) {
+    return;
+  }
+
+  backgroundHeartbeatInFlight = true;
+  try {
+    await heartbeat(true);
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Background heartbeat failed.",
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+  } finally {
+    backgroundHeartbeatInFlight = false;
   }
 }
 
@@ -313,7 +345,10 @@ async function heartbeat(force = false): Promise<void> {
 }
 
 class ServerClient {
-  public constructor(private readonly baseUrl: string) {}
+  public constructor(
+    private readonly baseUrl: string,
+    private readonly requestTimeoutMs: number
+  ) {}
 
   public heartbeat(applianceId: string, name: string, playbackState: PlaybackState) {
     return this.post<{ playback: { enabled: boolean; loopEnabled: boolean } }>(
@@ -383,10 +418,15 @@ class ServerClient {
     body?: Record<string, unknown>
   ): Promise<T> {
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, this.requestTimeoutMs);
 
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
+        signal: controller.signal,
         ...(body
           ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } }
           : {})
@@ -395,6 +435,8 @@ class ServerClient {
       throw new Error(
         `${method} ${path} failed: ${error instanceof Error ? error.message : "network error"}`
       );
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (!response.ok) {
@@ -405,6 +447,6 @@ class ServerClient {
   }
 }
 
-const client = new ServerClient(config.values.serverUrl);
+const client = new ServerClient(config.values.serverUrl, config.values.applianceRequestTimeoutMs);
 
 void main();

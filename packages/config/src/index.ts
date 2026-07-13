@@ -18,6 +18,7 @@ const envSchema = z.object({
   CARETV_APPLIANCE_POLL_MS: millisecondsSchema.default(1000),
   CARETV_APPLIANCE_HEARTBEAT_MS: millisecondsSchema.default(5000),
   CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS: millisecondsSchema.default(1000),
+  CARETV_APPLIANCE_REQUEST_TIMEOUT_MS: millisecondsSchema.default(10000),
   CARETV_SERVER_URL: z.string().url().default("http://127.0.0.1:4010"),
   CARETV_AUTH_TOKEN: z.string().min(16).optional()
 });
@@ -34,6 +35,7 @@ export interface CareTvConfig {
   appliancePollMs: number;
   applianceHeartbeatMs: number;
   appliancePlaybackObserveMs: number;
+  applianceRequestTimeoutMs: number;
   serverUrl: string;
   authToken?: string;
 }
@@ -79,6 +81,7 @@ export function loadConfig(
     appliancePollMs: parsed.data.CARETV_APPLIANCE_POLL_MS,
     applianceHeartbeatMs: parsed.data.CARETV_APPLIANCE_HEARTBEAT_MS,
     appliancePlaybackObserveMs: parsed.data.CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS,
+    applianceRequestTimeoutMs: parsed.data.CARETV_APPLIANCE_REQUEST_TIMEOUT_MS,
     serverUrl: parsed.data.CARETV_SERVER_URL.replace(/\/$/, ""),
     ...(parsed.data.CARETV_AUTH_TOKEN ? { authToken: parsed.data.CARETV_AUTH_TOKEN } : {})
   };
