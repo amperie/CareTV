@@ -15,7 +15,11 @@ export type CareTvDatabase = DatabaseSyncType;
 
 export function openDatabase(filename: string): CareTvDatabase {
   const db = new DatabaseSync(filename);
-  db.exec("PRAGMA foreign_keys = ON;");
+  db.exec(`
+    PRAGMA busy_timeout = 10000;
+    PRAGMA foreign_keys = ON;
+    PRAGMA journal_mode = WAL;
+  `);
   return db;
 }
 

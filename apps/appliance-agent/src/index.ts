@@ -23,26 +23,37 @@ async function main(): Promise<void> {
   );
 
   for (;;) {
-    const playback = await pollPlaybackSettings();
+    try {
+      const playback = await pollPlaybackSettings();
 
-    if (!playback) {
+      if (!playback) {
+        await sleep(config.values.appliancePollMs);
+        continue;
+      }
+
+      if (!playback.enabled) {
+        await sleep(config.values.appliancePollMs);
+        continue;
+      }
+
+      const queueEntry = await client.claimNextQueueEntry();
+
+      if (!queueEntry) {
+        await sleep(config.values.appliancePollMs);
+        continue;
+      }
+
+      await play(queueEntry, playback.loopEnabled);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Appliance loop error; retrying.",
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
       await sleep(config.values.appliancePollMs);
-      continue;
     }
-
-    if (!playback.enabled) {
-      await sleep(config.values.appliancePollMs);
-      continue;
-    }
-
-    const queueEntry = await client.claimNextQueueEntry();
-
-    if (!queueEntry) {
-      await sleep(config.values.appliancePollMs);
-      continue;
-    }
-
-    await play(queueEntry, playback.loopEnabled);
   }
 }
 
@@ -245,7 +256,10 @@ async function fail(queueEntryId: string, code: string, message: string): Promis
     lastErrorCode: code,
     lastErrorMessage: message
   });
-  await apply({ type: "FAILED", code, message });
+
+  if (state.phase !== "idle") {
+    await apply({ type: "FAILED", code, message });
+  }
 }
 
 async function apply(event: PlaybackStateEvent): Promise<void> {
