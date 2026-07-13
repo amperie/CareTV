@@ -89,6 +89,9 @@ The appliance agent reads these environment variables:
 - `CARETV_SERVER_URL`: server base URL, default `http://127.0.0.1:4010`
 - `CARETV_APPLIANCE_ID`: stable appliance id, default `local-appliance`
 - `CARETV_APPLIANCE_NAME`: dashboard display name, default `Local Appliance`
+- `CARETV_APPLIANCE_POLL_MS`: control/queue polling interval, default `1000`
+- `CARETV_APPLIANCE_HEARTBEAT_MS`: idle heartbeat interval, default `5000`
+- `CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS`: playback observation/progress interval, default `1000`
 
 For local development, `pnpm dev` starts the appliance against the local server. For a separate TV
 appliance, run `pnpm --filter @caretv/appliance-agent dev` with `CARETV_SERVER_URL` pointing at the

@@ -217,6 +217,8 @@ app.post("/api/v1/appliance/heartbeat", (request) => {
   return { ok: true, playback: playbackSettings() };
 });
 
+app.get("/api/v1/appliance/playback", () => playbackSettings());
+
 app.get("/api/v1/appliance/media/:id", (request, reply) => {
   const item = media.get(routeParam(request.params, "id"));
 

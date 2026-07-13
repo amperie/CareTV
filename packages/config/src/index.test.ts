@@ -14,6 +14,9 @@ describe("config", () => {
       host: "127.0.0.1",
       serverPort: 4010,
       webPort: 4020,
+      appliancePollMs: 1000,
+      applianceHeartbeatMs: 5000,
+      appliancePlaybackObserveMs: 1000,
       timezone: "America/Los_Angeles"
     });
     expect(config.values.runtimeDir).toBe(normalizePath(".caretv/runtime", "C:\\CareTV"));
@@ -55,6 +58,9 @@ describe("config", () => {
         timezone: "UTC",
         applianceId: "local-appliance",
         applianceName: "Local Appliance",
+        appliancePollMs: 1000,
+        applianceHeartbeatMs: 5000,
+        appliancePlaybackObserveMs: 1000,
         serverUrl: "http://127.0.0.1:4010",
         authToken: "0123456789abcdef"
       })

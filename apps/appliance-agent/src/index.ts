@@ -8,36 +8,37 @@ import type { PlaybackStateEvent } from "@caretv/state-machine";
 const config = loadConfig();
 const adapter = new FakeStreamingAdapter();
 let state: PlaybackState = createIdleState();
+let nextHeartbeatAt = 0;
 
 async function main(): Promise<void> {
   console.log(
     JSON.stringify({
       applianceId: config.values.applianceId,
       name: config.values.applianceName,
-      serverUrl: config.values.serverUrl
+      serverUrl: config.values.serverUrl,
+      pollMs: config.values.appliancePollMs,
+      heartbeatMs: config.values.applianceHeartbeatMs,
+      playbackObserveMs: config.values.appliancePlaybackObserveMs
     })
   );
 
   for (;;) {
-    const heartbeat = await client.heartbeat(
-      config.values.applianceId,
-      config.values.applianceName,
-      state
-    );
+    await heartbeat();
+    const playback = await client.playbackSettings();
 
-    if (!heartbeat.playback.enabled) {
-      await sleep(1000);
+    if (!playback.enabled) {
+      await sleep(config.values.appliancePollMs);
       continue;
     }
 
     const queueEntry = await client.claimNextQueueEntry();
 
     if (!queueEntry) {
-      await sleep(1000);
+      await sleep(config.values.appliancePollMs);
       continue;
     }
 
-    await play(queueEntry, heartbeat.playback.loopEnabled);
+    await play(queueEntry, playback.loopEnabled);
   }
 }
 
@@ -83,7 +84,7 @@ async function play(queueEntry: QueueEntry, loopEnabled: boolean): Promise<void>
     );
   } finally {
     await adapter.cleanup(context);
-    await client.heartbeat(config.values.applianceId, config.values.applianceName, state);
+    await heartbeat(true);
   }
 }
 
@@ -102,13 +103,13 @@ async function monitor(
 
     const observation = await streamingAdapter.observe(context);
     const result = await applyObservation(queueEntry.id, streamingAdapter, context, observation);
-    await client.heartbeat(config.values.applianceId, config.values.applianceName, state);
+    await heartbeat(true);
 
     if (result) {
       return result;
     }
 
-    await sleep(1000);
+    await sleep(config.values.appliancePlaybackObserveMs);
   }
 
   await fail(queueEntry.id, "observation-limit", `Playback did not finish: ${mediaItem.title}`);
@@ -264,6 +265,17 @@ function sleep(milliseconds: number): Promise<void> {
   });
 }
 
+async function heartbeat(force = false): Promise<void> {
+  const now = Date.now();
+
+  if (!force && now < nextHeartbeatAt) {
+    return;
+  }
+
+  await client.heartbeat(config.values.applianceId, config.values.applianceName, state);
+  nextHeartbeatAt = now + config.values.applianceHeartbeatMs;
+}
+
 class ServerClient {
   public constructor(private readonly baseUrl: string) {}
 
@@ -276,6 +288,10 @@ class ServerClient {
         state: playbackState
       }
     );
+  }
+
+  public playbackSettings() {
+    return this.get<{ enabled: boolean; loopEnabled: boolean }>("/api/v1/appliance/playback");
   }
 
   public claimNextQueueEntry() {

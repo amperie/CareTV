@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 const portSchema = z.coerce.number().int().min(1).max(65535);
+const millisecondsSchema = z.coerce.number().int().min(100);
 
 const envSchema = z.object({
   CARETV_HOST: z.string().min(1).default("127.0.0.1"),
@@ -14,6 +15,9 @@ const envSchema = z.object({
   CARETV_TIMEZONE: z.string().min(1).default("America/Los_Angeles"),
   CARETV_APPLIANCE_ID: z.string().min(1).default("local-appliance"),
   CARETV_APPLIANCE_NAME: z.string().min(1).default("Local Appliance"),
+  CARETV_APPLIANCE_POLL_MS: millisecondsSchema.default(1000),
+  CARETV_APPLIANCE_HEARTBEAT_MS: millisecondsSchema.default(5000),
+  CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS: millisecondsSchema.default(1000),
   CARETV_SERVER_URL: z.string().url().default("http://127.0.0.1:4010"),
   CARETV_AUTH_TOKEN: z.string().min(16).optional()
 });
@@ -27,6 +31,9 @@ export interface CareTvConfig {
   timezone: string;
   applianceId: string;
   applianceName: string;
+  appliancePollMs: number;
+  applianceHeartbeatMs: number;
+  appliancePlaybackObserveMs: number;
   serverUrl: string;
   authToken?: string;
 }
@@ -69,6 +76,9 @@ export function loadConfig(
     timezone: parsed.data.CARETV_TIMEZONE,
     applianceId: parsed.data.CARETV_APPLIANCE_ID,
     applianceName: parsed.data.CARETV_APPLIANCE_NAME,
+    appliancePollMs: parsed.data.CARETV_APPLIANCE_POLL_MS,
+    applianceHeartbeatMs: parsed.data.CARETV_APPLIANCE_HEARTBEAT_MS,
+    appliancePlaybackObserveMs: parsed.data.CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS,
     serverUrl: parsed.data.CARETV_SERVER_URL.replace(/\/$/, ""),
     ...(parsed.data.CARETV_AUTH_TOKEN ? { authToken: parsed.data.CARETV_AUTH_TOKEN } : {})
   };
