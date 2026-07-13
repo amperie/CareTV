@@ -307,6 +307,15 @@ small {
   background: #dbe4ea;
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.icon-button:disabled:hover {
+  background: #eef2f5;
+}
+
 .icon-button.danger {
   background: #f5d1d1;
   color: #821b1b;

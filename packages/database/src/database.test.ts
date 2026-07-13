@@ -64,6 +64,25 @@ describe("database repositories", () => {
     });
   });
 
+  it("moves queued entries within the queued subset", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({ ...fakeQueueEntry("active", "media-1", 1), status: "playing" });
+      queue.enqueue(fakeQueueEntry("first", "media-1", 2));
+      queue.enqueue(fakeQueueEntry("second", "media-1", 3));
+      queue.enqueue({ ...fakeQueueEntry("done", "media-1", 4), status: "completed" });
+
+      expect(queue.move("first", "up")).toBe(false);
+      expect(queue.move("first", "down")).toBe(true);
+      expect(queue.list().map((entry) => entry.id)).toEqual(["active", "second", "first", "done"]);
+      expect(queue.move("first", "up")).toBe(true);
+      expect(queue.list().map((entry) => entry.id)).toEqual(["active", "first", "second", "done"]);
+    });
+  });
+
   it("stores commands, events, settings, and soft deletes", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

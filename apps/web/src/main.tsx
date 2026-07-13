@@ -122,6 +122,10 @@ function App() {
   }
 
   const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
+  const queuedIds = useMemo(
+    () => status?.queue.filter((entry) => entry.status === "queued").map((entry) => entry.id) ?? [],
+    [status?.queue]
+  );
   const state = status?.state;
   const progress =
     state?.positionSeconds !== undefined && state.durationSeconds
@@ -222,45 +226,55 @@ function App() {
           </div>
           <div className="rows">
             {status?.queue.length ? (
-              status.queue.map((entry) => (
-                <div className="row" key={entry.id}>
-                  <div>
-                    <strong>{mediaById.get(entry.mediaItemId)?.title ?? entry.mediaItemId}</strong>
-                    <span>
-                      #{entry.position} - {scenarioLabel(mediaById.get(entry.mediaItemId))}
-                    </span>
-                    {entry.lastErrorCode ? (
-                      <small>
-                        {entry.lastErrorCode}
-                        {entry.lastErrorMessage ? `: ${entry.lastErrorMessage}` : ""}
-                      </small>
-                    ) : null}
-                  </div>
-                  {entry.status === "queued" ? (
-                    <div className="row-actions">
-                      <button
-                        className="icon-button"
-                        onClick={() => void moveQueueEntry(entry.id, "up")}
-                      >
-                        Up
-                      </button>
-                      <button
-                        className="icon-button"
-                        onClick={() => void moveQueueEntry(entry.id, "down")}
-                      >
-                        Down
-                      </button>
-                      <button
-                        className="icon-button danger"
-                        onClick={() => void removeQueueEntry(entry.id)}
-                      >
-                        Remove
-                      </button>
+              status.queue.map((entry) => {
+                const queuedIndex = queuedIds.indexOf(entry.id);
+                const canMoveUp = queuedIndex > 0;
+                const canMoveDown = queuedIndex >= 0 && queuedIndex < queuedIds.length - 1;
+
+                return (
+                  <div className="row" key={entry.id}>
+                    <div>
+                      <strong>
+                        {mediaById.get(entry.mediaItemId)?.title ?? entry.mediaItemId}
+                      </strong>
+                      <span>
+                        #{entry.position} - {scenarioLabel(mediaById.get(entry.mediaItemId))}
+                      </span>
+                      {entry.lastErrorCode ? (
+                        <small>
+                          {entry.lastErrorCode}
+                          {entry.lastErrorMessage ? `: ${entry.lastErrorMessage}` : ""}
+                        </small>
+                      ) : null}
                     </div>
-                  ) : null}
-                  <span className={`badge ${entry.status}`}>{entry.status}</span>
-                </div>
-              ))
+                    {entry.status === "queued" ? (
+                      <div className="row-actions">
+                        <button
+                          className="icon-button"
+                          disabled={!canMoveUp}
+                          onClick={() => void moveQueueEntry(entry.id, "up")}
+                        >
+                          Up
+                        </button>
+                        <button
+                          className="icon-button"
+                          disabled={!canMoveDown}
+                          onClick={() => void moveQueueEntry(entry.id, "down")}
+                        >
+                          Down
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          onClick={() => void removeQueueEntry(entry.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : null}
+                    <span className={`badge ${entry.status}`}>{entry.status}</span>
+                  </div>
+                );
+              })
             ) : (
               <p className="muted">No queued items yet.</p>
             )}

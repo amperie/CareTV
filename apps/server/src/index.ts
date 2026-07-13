@@ -110,6 +110,11 @@ app.post("/api/v1/queue", (request, reply) => {
   return entry;
 });
 
+app.post("/api/v1/queue/clear-completed", () => {
+  db.exec("DELETE FROM playback_events;");
+  return { cleared: queue.clearCompleted() };
+});
+
 app.delete("/api/v1/queue/:id", (request, reply) => {
   const id = routeParam(request.params, "id");
 
@@ -131,11 +136,6 @@ app.post("/api/v1/queue/:id/move", (request, reply) => {
   }
 
   return { moved: queue.move(routeParam(request.params, "id"), direction) };
-});
-
-app.post("/api/v1/queue/clear-completed", () => {
-  db.exec("DELETE FROM playback_events;");
-  return { cleared: queue.clearCompleted() };
 });
 
 app.post("/api/v1/fake-queue", (request, reply) => {
