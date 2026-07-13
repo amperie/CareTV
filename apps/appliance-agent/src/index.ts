@@ -43,6 +43,7 @@ async function main(): Promise<void> {
       const queueEntry = await client.claimNextQueueEntry();
 
       if (!queueEntry) {
+        await client.completePlaybackRun();
         await sleep(config.values.appliancePollMs);
         continue;
       }
@@ -139,7 +140,7 @@ async function play(queueEntry: QueueEntry, loopEnabled: boolean): Promise<void>
     const result = await monitor(queueEntry, mediaItem, adapter, context);
 
     if (result === "completed" && loopEnabled && mediaItem.repeatable) {
-      await client.enqueue(mediaItem.id, queueEntry.priority);
+      await client.requeue(queueEntry.id);
     }
   } catch (error) {
     await fail(
@@ -373,8 +374,15 @@ class ServerClient {
     return this.get<MediaItem>(`/api/v1/appliance/media/${id}`);
   }
 
-  public enqueue(mediaItemId: string, priority: number) {
-    return this.post<QueueEntry>("/api/v1/appliance/queue", { mediaItemId, priority });
+  public requeue(id: string) {
+    return this.post(`/api/v1/appliance/queue/${id}/requeue`, {});
+  }
+
+  public completePlaybackRun() {
+    return this.post<{ enabled: boolean; loopEnabled: boolean }>(
+      "/api/v1/appliance/playback/complete-run",
+      {}
+    );
   }
 
   public pendingCommands() {

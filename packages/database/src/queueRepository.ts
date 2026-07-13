@@ -138,6 +138,25 @@ export class QueueRepository {
     return Number(result.changes) > 0;
   }
 
+  public requeueCompleted(id: string): boolean {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET status = 'queued',
+              position = ?,
+              started_at = NULL,
+              completed_at = NULL,
+              last_error_code = NULL,
+              last_error_message = NULL
+          WHERE id = ? AND status IN ('completed', 'failed', 'skipped')
+        `
+      )
+      .run(this.nextPosition(), id);
+
+    return Number(result.changes) > 0;
+  }
+
   public clearCompleted(): number {
     const result = this.db
       .prepare(
@@ -224,6 +243,16 @@ export class QueueRepository {
       .get() as { position: number } | undefined;
 
     return row?.position ?? 1;
+  }
+
+  public runnableCount(): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM queue_entries WHERE status IN ('queued', 'starting', 'playing', 'paused')"
+      )
+      .get() as { count: number } | undefined;
+
+    return row?.count ?? 0;
   }
 
   private activeCount(): number {

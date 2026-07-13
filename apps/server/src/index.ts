@@ -261,6 +261,15 @@ app.post("/api/v1/appliance/queue", (request, reply) => {
   return entry;
 });
 
+app.post("/api/v1/appliance/queue/:id/requeue", (request, reply) => {
+  if (!queue.requeueCompleted(routeParam(request.params, "id"))) {
+    reply.code(409);
+    return { error: "queue-entry-not-requeueable" };
+  }
+
+  return { requeued: true };
+});
+
 app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
   const body = parseBody(request.body);
   const status = stringField(body, "status", "") as QueueEntryStatus;
@@ -293,6 +302,14 @@ app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
   }
 
   return { ok: true };
+});
+
+app.post("/api/v1/appliance/playback/complete-run", () => {
+  if (queue.runnableCount() === 0) {
+    return setPlaybackSettings({ enabled: false });
+  }
+
+  return playbackSettings();
 });
 
 app.get("/api/v1/appliance/commands", () => commands.listByStatus("pending"));
