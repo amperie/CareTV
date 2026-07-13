@@ -57,13 +57,14 @@ function App() {
   const [durationSeconds, setDurationSeconds] = useState(12);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [scenario, setScenario] = useState("normal");
+  const [queueMessage, setQueueMessage] = useState("");
   const [status, setStatus] = useState<PlaybackStatus | undefined>();
   const [title, setTitle] = useState("Fake movie");
 
   async function refresh() {
     const [mediaResponse, statusResponse] = await Promise.all([
-      fetch(`${apiBase}/media`),
-      fetch(`${apiBase}/playback/status`)
+      fetch(`${apiBase}/media`, { cache: "no-store" }),
+      fetch(`${apiBase}/playback/status`, { cache: "no-store" })
     ]);
     setMedia((await mediaResponse.json()) as MediaItem[]);
     setStatus((await statusResponse.json()) as PlaybackStatus);
@@ -76,6 +77,7 @@ function App() {
   }, []);
 
   async function addFakeItem() {
+    setQueueMessage("");
     await post("/fake-queue", { title, scenario, durationSeconds });
     await refresh();
   }
@@ -92,6 +94,7 @@ function App() {
   }
 
   async function resetLab() {
+    setQueueMessage("");
     await post("/lab/reset", {});
     await refresh();
   }
@@ -107,16 +110,26 @@ function App() {
   }
 
   async function removeQueueEntry(id: string) {
+    setQueueMessage("");
     await request(`/queue/${id}`, { method: "DELETE" });
     await refresh();
   }
 
   async function moveQueueEntry(id: string, direction: "up" | "down") {
-    await post(`/queue/${id}/move`, { direction });
-    await refresh();
+    setQueueMessage("");
+
+    try {
+      await post(`/queue/${id}/move`, { direction });
+      setStatus((current) => (current ? moveQueueInStatus(current, id, direction) : current));
+      await refresh();
+    } catch {
+      setQueueMessage("That item is no longer movable. Stop playback, then reorder queued items.");
+      await refresh();
+    }
   }
 
   async function clearCompleted() {
+    setQueueMessage("");
     await post("/queue/clear-completed", {});
     await refresh();
   }
@@ -224,12 +237,16 @@ function App() {
               Clear done
             </button>
           </div>
+          {queueMessage ? <p className="queue-message">{queueMessage}</p> : null}
           <div className="rows">
             {status?.queue.length ? (
               status.queue.map((entry) => {
                 const queuedIndex = queuedIds.indexOf(entry.id);
                 const canMoveUp = queuedIndex > 0;
                 const canMoveDown = queuedIndex >= 0 && queuedIndex < queuedIds.length - 1;
+                const disabledReason = status?.running
+                  ? "Stop playback before reordering."
+                  : "Only queued items with a queued neighbor can move.";
 
                 return (
                   <div className="row" key={entry.id}>
@@ -251,15 +268,17 @@ function App() {
                       <div className="row-actions">
                         <button
                           className="icon-button"
-                          disabled={!canMoveUp}
+                          disabled={status?.running || !canMoveUp}
                           onClick={() => void moveQueueEntry(entry.id, "up")}
+                          title={canMoveUp && !status?.running ? "Move up" : disabledReason}
                         >
                           Up
                         </button>
                         <button
                           className="icon-button"
-                          disabled={!canMoveDown}
+                          disabled={status?.running || !canMoveDown}
                           onClick={() => void moveQueueEntry(entry.id, "down")}
+                          title={canMoveDown && !status?.running ? "Move down" : disabledReason}
                         >
                           Down
                         </button>
@@ -325,6 +344,36 @@ function formatDetail(value: unknown): string {
 function scenarioLabel(item: MediaItem | undefined): string {
   const scenario = item?.metadata.scenario;
   return typeof scenario === "string" ? scenario : "unknown";
+}
+
+function moveQueueInStatus(
+  status: PlaybackStatus,
+  id: string,
+  direction: "up" | "down"
+): PlaybackStatus {
+  const queue = [...status.queue];
+  const queuedIndexes = queue
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.status === "queued");
+  const currentQueuedIndex = queuedIndexes.findIndex(({ entry }) => entry.id === id);
+  const neighborQueuedIndex = direction === "up" ? currentQueuedIndex - 1 : currentQueuedIndex + 1;
+  const current = queuedIndexes[currentQueuedIndex];
+  const neighbor = queuedIndexes[neighborQueuedIndex];
+
+  if (!current || !neighbor) {
+    return status;
+  }
+
+  const currentEntry = queue[current.index];
+  const neighborEntry = queue[neighbor.index];
+
+  if (!currentEntry || !neighborEntry) {
+    return status;
+  }
+
+  queue[current.index] = neighborEntry;
+  queue[neighbor.index] = currentEntry;
+  return { ...status, queue };
 }
 
 const root = document.getElementById("root");

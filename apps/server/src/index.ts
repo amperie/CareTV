@@ -135,7 +135,14 @@ app.post("/api/v1/queue/:id/move", (request, reply) => {
     return { error: "unsupported-direction" };
   }
 
-  return { moved: queue.move(routeParam(request.params, "id"), direction) };
+  const moved = queue.move(routeParam(request.params, "id"), direction);
+
+  if (!moved) {
+    reply.code(409);
+    return { error: "queue-entry-not-movable" };
+  }
+
+  return { moved };
 });
 
 app.post("/api/v1/fake-queue", (request, reply) => {

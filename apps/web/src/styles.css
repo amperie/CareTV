@@ -265,6 +265,13 @@ label {
   overflow: auto;
 }
 
+.queue-message {
+  color: #7a4c00;
+  font-size: 0.84rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
 .row {
   align-items: center;
   border-bottom: 1px solid #edf1f3;
@@ -290,7 +297,7 @@ small {
   line-height: 1.3;
 }
 
-.row-actions {
+.row .row-actions {
   display: flex;
   gap: 4px;
 }
