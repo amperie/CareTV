@@ -37,7 +37,15 @@ interface PlaybackState {
   error?: { code: string; message: string };
 }
 
+interface ApplianceStatus {
+  applianceId: string;
+  name: string;
+  connected: boolean;
+  lastSeenAt: string;
+}
+
 interface PlaybackStatus {
+  appliance?: ApplianceStatus;
   events: PlaybackEvent[];
   loopEnabled: boolean;
   queue: QueueEntry[];
@@ -98,6 +106,21 @@ function App() {
     await refresh();
   }
 
+  async function removeQueueEntry(id: string) {
+    await request(`/queue/${id}`, { method: "DELETE" });
+    await refresh();
+  }
+
+  async function moveQueueEntry(id: string, direction: "up" | "down") {
+    await post(`/queue/${id}/move`, { direction });
+    await refresh();
+  }
+
+  async function clearCompleted() {
+    await post("/queue/clear-completed", {});
+    await refresh();
+  }
+
   const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
   const state = status?.state;
   const progress =
@@ -113,7 +136,7 @@ function App() {
           <h1>Fake playback lab</h1>
         </div>
         <div className={status?.running ? "status running" : "status"}>
-          {status?.running ? "Running" : "Stopped"}
+          {status?.appliance?.connected ? status.appliance.name : "No appliance"}
         </div>
       </header>
 
@@ -182,10 +205,21 @@ function App() {
             </button>
             <button onClick={() => void stopPlayback()}>Stop</button>
           </div>
+          <p className="appliance-line">
+            {status?.running ? "Playback enabled" : "Playback stopped"} /{" "}
+            {status?.appliance?.connected
+              ? `connected ${new Date(status.appliance.lastSeenAt).toLocaleTimeString()}`
+              : "appliance offline"}
+          </p>
         </div>
 
         <div className="panel queue">
-          <h2>Queue</h2>
+          <div className="section-header">
+            <h2>Queue</h2>
+            <button className="compact secondary" onClick={() => void clearCompleted()}>
+              Clear done
+            </button>
+          </div>
           <div className="rows">
             {status?.queue.length ? (
               status.queue.map((entry) => (
@@ -202,6 +236,28 @@ function App() {
                       </small>
                     ) : null}
                   </div>
+                  {entry.status === "queued" ? (
+                    <div className="row-actions">
+                      <button
+                        className="icon-button"
+                        onClick={() => void moveQueueEntry(entry.id, "up")}
+                      >
+                        Up
+                      </button>
+                      <button
+                        className="icon-button"
+                        onClick={() => void moveQueueEntry(entry.id, "down")}
+                      >
+                        Down
+                      </button>
+                      <button
+                        className="icon-button danger"
+                        onClick={() => void removeQueueEntry(entry.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
                   <span className={`badge ${entry.status}`}>{entry.status}</span>
                 </div>
               ))
@@ -232,12 +288,15 @@ function App() {
 }
 
 async function post(path: string, body: Record<string, unknown>) {
-  const response = await fetch(`${apiBase}${path}`, {
+  await request(path, {
     body: JSON.stringify(body),
     headers: { "content-type": "application/json" },
     method: "POST"
   });
+}
 
+async function request(path: string, init: RequestInit) {
+  const response = await fetch(`${apiBase}${path}`, init);
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }

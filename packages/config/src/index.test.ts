@@ -53,6 +53,9 @@ describe("config", () => {
         runtimeDir: "runtime",
         chromeProfileDir: "profile",
         timezone: "UTC",
+        applianceId: "local-appliance",
+        applianceName: "Local Appliance",
+        serverUrl: "http://127.0.0.1:4010",
         authToken: "0123456789abcdef"
       })
     ).toMatchObject({ authToken: "[redacted]" });

@@ -12,6 +12,9 @@ const envSchema = z.object({
   CARETV_RUNTIME_DIR: z.string().min(1).default(".caretv/runtime"),
   CARETV_CHROME_PROFILE_DIR: z.string().min(1).default(".caretv/chrome-profile"),
   CARETV_TIMEZONE: z.string().min(1).default("America/Los_Angeles"),
+  CARETV_APPLIANCE_ID: z.string().min(1).default("local-appliance"),
+  CARETV_APPLIANCE_NAME: z.string().min(1).default("Local Appliance"),
+  CARETV_SERVER_URL: z.string().url().default("http://127.0.0.1:4010"),
   CARETV_AUTH_TOKEN: z.string().min(16).optional()
 });
 
@@ -22,6 +25,9 @@ export interface CareTvConfig {
   runtimeDir: string;
   chromeProfileDir: string;
   timezone: string;
+  applianceId: string;
+  applianceName: string;
+  serverUrl: string;
   authToken?: string;
 }
 
@@ -61,6 +67,9 @@ export function loadConfig(
     runtimeDir: normalizePath(parsed.data.CARETV_RUNTIME_DIR, cwd),
     chromeProfileDir: normalizePath(parsed.data.CARETV_CHROME_PROFILE_DIR, cwd),
     timezone: parsed.data.CARETV_TIMEZONE,
+    applianceId: parsed.data.CARETV_APPLIANCE_ID,
+    applianceName: parsed.data.CARETV_APPLIANCE_NAME,
+    serverUrl: parsed.data.CARETV_SERVER_URL.replace(/\/$/, ""),
     ...(parsed.data.CARETV_AUTH_TOKEN ? { authToken: parsed.data.CARETV_AUTH_TOKEN } : {})
   };
 

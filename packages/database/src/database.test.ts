@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MediaItem, QueueEntry } from "@caretv/core";
 
+import { ApplianceRepository } from "./applianceRepository.js";
 import { CommandRepository } from "./commandRepository.js";
 import { migrate, openDatabase } from "./database.js";
 import { MediaRepository } from "./mediaRepository.js";
@@ -92,6 +93,25 @@ describe("database repositories", () => {
       expect(events.listRecent(5)[0]?.details).toEqual({ ok: true });
       expect(settings.get("timezone")).toEqual({ value: "UTC" });
       expect(media.get("media-1")).toBeUndefined();
+    });
+  });
+
+  it("stores appliance heartbeat status", () => {
+    withMigratedDatabase((db) => {
+      const appliances = new ApplianceRepository(db);
+
+      appliances.heartbeat("appliance-1", "Living Room", now, {
+        phase: "idle",
+        lastHeartbeatAt: now,
+        recoveryAttempt: 0
+      });
+
+      expect(appliances.latest(new Date(now))).toMatchObject({
+        applianceId: "appliance-1",
+        name: "Living Room",
+        connected: true,
+        playbackState: { phase: "idle" }
+      });
     });
   });
 });

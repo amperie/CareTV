@@ -6,16 +6,21 @@ state model, dashboard, fake adapter, local-media playback, recovery, and watchd
 
 ## Current Status
 
-This repository contains the Phase 0 scaffold:
+This repository currently contains the Phase 0/1 local prototype:
 
 - pnpm TypeScript workspace
-- server, agent, watchdog, and web app shells
+- server control plane
+- web dashboard
+- appliance agent
 - shared package structure
+- SQLite repositories for media, queue, commands, events, settings, and appliance heartbeat
+- fake playback adapter and state machine
 - strict TypeScript, ESLint, Prettier, and Vitest configuration
 - Windows-focused startup script
 
-No database, Playwright automation, streaming adapter, scheduling, or playback logic has been
-implemented yet.
+Real streaming-service automation is not implemented yet. The current playback path is deterministic
+fake playback used to prove queue orchestration, remote appliance polling, state reporting, and
+dashboard controls.
 
 ## Requirements
 
@@ -37,7 +42,7 @@ pnpm test
 
 ## Development
 
-Start all placeholder processes:
+Start the server, dashboard, and local appliance agent:
 
 ```powershell
 .\scripts\start-dev.ps1
@@ -54,12 +59,16 @@ Default local endpoints:
 - server health: `http://127.0.0.1:4010/health`
 - web dashboard: `http://127.0.0.1:4020`
 
+In deployment, the server/dashboard can run on a hosted machine and the appliance agent runs on the
+TV appliance. The appliance polls the server for queue work and commands, executes playback locally,
+and reports heartbeat/state/events back to the server.
+
 ## Fake Playback Lab
 
-The dashboard can currently add fake media items, enqueue them, start fake playback, and show
-state/event output.
+The dashboard can add fake media items, enqueue them, start/stop playback, toggle loop, edit queued
+items, and show appliance state/event output.
 
-1. Start the local server and dashboard:
+1. Start the local server, dashboard, and appliance:
 
    ```powershell
    .\scripts\start-dev.ps1
@@ -73,6 +82,18 @@ state/event output.
 The playback is deterministic fake playback only. It does not open Chrome or use any streaming
 service yet.
 
+## Appliance Configuration
+
+The appliance agent reads these environment variables:
+
+- `CARETV_SERVER_URL`: server base URL, default `http://127.0.0.1:4010`
+- `CARETV_APPLIANCE_ID`: stable appliance id, default `local-appliance`
+- `CARETV_APPLIANCE_NAME`: dashboard display name, default `Local Appliance`
+
+For local development, `pnpm dev` starts the appliance against the local server. For a separate TV
+appliance, run `pnpm --filter @caretv/appliance-agent dev` with `CARETV_SERVER_URL` pointing at the
+hosted server.
+
 ## Runtime Data
 
 Runtime data must stay outside source control. Use `.env.example` as the starting point and
@@ -81,6 +102,5 @@ as `C:\CareTV\runtime`.
 
 ## Next Task
 
-Implement Task 2 from the project spec: a shared configuration package using Zod that loads and
-validates environment variables, normalizes Windows paths, creates runtime directories, and logs a
-redacted configuration summary.
+Add a dedicated output-only route/window and then start the first real playback adapter, ideally
+local file or YouTube before attempting DRM-heavy services.

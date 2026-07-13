@@ -1,3 +1,4 @@
+export { ApplianceRepository } from "./applianceRepository.js";
 export { openDatabase, migrate } from "./database.js";
 export type { CareTvDatabase } from "./database.js";
 export { CommandRepository } from "./commandRepository.js";

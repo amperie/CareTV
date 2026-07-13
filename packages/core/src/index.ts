@@ -102,6 +102,14 @@ export interface PlaybackState {
   };
 }
 
+export interface ApplianceStatus {
+  applianceId: string;
+  name: string;
+  connected: boolean;
+  lastSeenAt: string;
+  playbackState?: PlaybackState;
+}
+
 export interface HealthStatus {
   service: string;
   status: "ok";

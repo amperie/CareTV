@@ -227,9 +227,34 @@ label {
   margin-top: 14px;
 }
 
+.appliance-line {
+  color: #60717e;
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin-top: 10px;
+}
+
 .queue,
 .events {
   grid-column: span 1;
+}
+
+.section-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
+}
+
+.compact {
+  font-size: 0.78rem;
+  min-height: 30px;
+  padding: 5px 9px;
 }
 
 .rows,
@@ -243,9 +268,9 @@ label {
 .row {
   align-items: center;
   border-bottom: 1px solid #edf1f3;
-  display: flex;
+  display: grid;
   gap: 12px;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   padding: 8px 0;
 }
 
@@ -263,6 +288,32 @@ small {
 small {
   font-size: 0.78rem;
   line-height: 1.3;
+}
+
+.row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-button {
+  background: #eef2f5;
+  color: #24323d;
+  font-size: 0.72rem;
+  min-height: 28px;
+  padding: 4px 7px;
+}
+
+.icon-button:hover {
+  background: #dbe4ea;
+}
+
+.icon-button.danger {
+  background: #f5d1d1;
+  color: #821b1b;
+}
+
+.icon-button.danger:hover {
+  background: #ecc0c0;
 }
 
 .badge {

@@ -76,5 +76,16 @@ export const migrations = [
         updated_at TEXT NOT NULL
       );
     `
+  },
+  {
+    id: 2,
+    sql: `
+      CREATE TABLE IF NOT EXISTS appliances (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        playback_state_json TEXT
+      );
+    `
   }
 ] as const;

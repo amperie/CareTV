@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@caretv/adapters": ["packages/adapters/dist/index.d.ts"],
+      "@caretv/config": ["packages/config/dist/index.d.ts"],
+      "@caretv/core": ["packages/core/dist/index.d.ts"],
+      "@caretv/state-machine": ["packages/state-machine/dist/index.d.ts"]
+    }
+  }
+}

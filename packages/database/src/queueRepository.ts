@@ -104,6 +104,65 @@ export class QueueRepository {
       );
   }
 
+  public remove(id: string): boolean {
+    const result = this.db
+      .prepare("UPDATE queue_entries SET status = 'cancelled' WHERE id = ? AND status = 'queued'")
+      .run(id);
+
+    return Number(result.changes) > 0;
+  }
+
+  public clearCompleted(): number {
+    const result = this.db
+      .prepare(
+        "DELETE FROM queue_entries WHERE status IN ('completed', 'failed', 'skipped', 'cancelled')"
+      )
+      .run();
+
+    return Number(result.changes);
+  }
+
+  public move(id: string, direction: "up" | "down"): boolean {
+    const current = this.get(id);
+
+    if (!current || current.status !== "queued") {
+      return false;
+    }
+
+    const comparator = direction === "up" ? "<" : ">";
+    const ordering = direction === "up" ? "DESC" : "ASC";
+    const neighbor = this.db
+      .prepare(
+        `
+          SELECT * FROM queue_entries
+          WHERE status = 'queued' AND position ${comparator} ?
+          ORDER BY position ${ordering}
+          LIMIT 1
+        `
+      )
+      .get(current.position) as unknown as QueueRow | undefined;
+
+    if (!neighbor) {
+      return false;
+    }
+
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      this.db.prepare("UPDATE queue_entries SET position = -1 WHERE id = ?").run(current.id);
+      this.db
+        .prepare("UPDATE queue_entries SET position = ? WHERE id = ?")
+        .run(current.position, neighbor.id);
+      this.db
+        .prepare("UPDATE queue_entries SET position = ? WHERE id = ?")
+        .run(neighbor.position, current.id);
+      this.db.exec("COMMIT;");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   public reconcileStaleActive(status: QueueEntryStatus, errorCode: string): number {
     const result = this.db
       .prepare(

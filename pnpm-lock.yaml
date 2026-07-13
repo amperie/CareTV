@@ -70,6 +70,25 @@ importers:
         specifier: ^4.19.2
         version: 4.23.0
 
+  apps/appliance-agent:
+    dependencies:
+      '@caretv/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@caretv/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@caretv/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@caretv/state-machine':
+        specifier: workspace:*
+        version: link:../../packages/state-machine
+    devDependencies:
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.0
+
   apps/server:
     dependencies:
       '@caretv/adapters':

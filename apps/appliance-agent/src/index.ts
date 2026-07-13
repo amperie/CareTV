@@ -1,0 +1,350 @@
+import { FakeStreamingAdapter } from "@caretv/adapters";
+import type { AdapterContext, PlaybackObservation, StreamingAdapter } from "@caretv/adapters";
+import { loadConfig } from "@caretv/config";
+import type { MediaItem, PlaybackCommand, PlaybackState, QueueEntry } from "@caretv/core";
+import { createIdleState, transition } from "@caretv/state-machine";
+import type { PlaybackStateEvent } from "@caretv/state-machine";
+
+const config = loadConfig();
+const adapter = new FakeStreamingAdapter();
+let state: PlaybackState = createIdleState();
+
+async function main(): Promise<void> {
+  console.log(
+    JSON.stringify({
+      applianceId: config.values.applianceId,
+      name: config.values.applianceName,
+      serverUrl: config.values.serverUrl
+    })
+  );
+
+  for (;;) {
+    const heartbeat = await client.heartbeat(
+      config.values.applianceId,
+      config.values.applianceName,
+      state
+    );
+
+    if (!heartbeat.playback.enabled) {
+      await sleep(1000);
+      continue;
+    }
+
+    const queueEntry = await client.claimNextQueueEntry();
+
+    if (!queueEntry) {
+      await sleep(1000);
+      continue;
+    }
+
+    await play(queueEntry, heartbeat.playback.loopEnabled);
+  }
+}
+
+async function play(queueEntry: QueueEntry, loopEnabled: boolean): Promise<void> {
+  const mediaItem = await client.getMedia(queueEntry.mediaItemId);
+
+  if (!adapter.supports(mediaItem)) {
+    await fail(queueEntry.id, "adapter-not-found", `No adapter supports ${mediaItem.service}.`);
+    return;
+  }
+
+  const context: AdapterContext = {
+    logger: console,
+    mediaItem,
+    signal: new AbortController().signal,
+    now: () => new Date()
+  };
+
+  try {
+    await apply({
+      type: "QUEUE_SELECTED",
+      queueEntryId: queueEntry.id,
+      mediaItemId: mediaItem.id,
+      adapterId: adapter.id,
+      title: mediaItem.title
+    });
+    await adapter.prepare(context);
+    await apply({ type: "BROWSER_LAUNCHED" });
+    await adapter.start(context);
+    await adapter.enterFullscreen(context);
+    await apply({ type: "READY" });
+
+    const result = await monitor(queueEntry, mediaItem, adapter, context);
+
+    if (result === "completed" && loopEnabled && mediaItem.repeatable) {
+      await client.enqueue(mediaItem.id, queueEntry.priority);
+    }
+  } catch (error) {
+    await fail(
+      queueEntry.id,
+      "agent-error",
+      error instanceof Error ? error.message : "Unknown appliance error"
+    );
+  } finally {
+    await adapter.cleanup(context);
+    await client.heartbeat(config.values.applianceId, config.values.applianceName, state);
+  }
+}
+
+async function monitor(
+  queueEntry: QueueEntry,
+  mediaItem: MediaItem,
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext
+): Promise<"completed" | "failed" | "skipped"> {
+  for (let count = 0; count < 600; count += 1) {
+    const commandResult = await applyCommands(queueEntry.id, streamingAdapter, context);
+
+    if (commandResult) {
+      return commandResult;
+    }
+
+    const observation = await streamingAdapter.observe(context);
+    const result = await applyObservation(queueEntry.id, streamingAdapter, context, observation);
+    await client.heartbeat(config.values.applianceId, config.values.applianceName, state);
+
+    if (result) {
+      return result;
+    }
+
+    await sleep(1000);
+  }
+
+  await fail(queueEntry.id, "observation-limit", `Playback did not finish: ${mediaItem.title}`);
+  return "failed";
+}
+
+async function applyCommands(
+  queueEntryId: string,
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext
+): Promise<"skipped" | undefined> {
+  for (const command of await client.pendingCommands()) {
+    if (command.mediaItemId && command.mediaItemId !== context.mediaItem.id) {
+      continue;
+    }
+
+    if (!canApplyCommand(command, state.phase)) {
+      await client.updateCommand(command.id, "failed");
+      continue;
+    }
+
+    switch (command.type) {
+      case "pause":
+        await streamingAdapter.pause(context);
+        await apply({ type: "PAUSED" });
+        await client.updateQueueStatus(queueEntryId, "paused");
+        await client.updateCommand(command.id, "accepted");
+        break;
+      case "resume":
+        await streamingAdapter.resume(context);
+        await apply({ type: "RESUMED" });
+        await client.updateQueueStatus(queueEntryId, "playing");
+        await client.updateCommand(command.id, "accepted");
+        break;
+      case "skip":
+      case "stop":
+        await streamingAdapter.stop(context);
+        await apply({ type: "STOPPED" });
+        await client.updateQueueStatus(queueEntryId, "skipped", {
+          completedAt: new Date().toISOString()
+        });
+        await client.updateCommand(command.id, "completed");
+        return "skipped";
+    }
+  }
+
+  return undefined;
+}
+
+async function applyObservation(
+  queueEntryId: string,
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext,
+  observation: PlaybackObservation
+): Promise<"completed" | "failed" | undefined> {
+  switch (observation.status) {
+    case "ready":
+    case "unknown":
+      await apply(positionEvent("HEARTBEAT", observation.positionSeconds));
+      return undefined;
+    case "playing":
+      await client.updateQueueStatus(queueEntryId, "playing");
+      await apply({
+        type: "PLAYING",
+        ...(observation.positionSeconds !== undefined
+          ? { positionSeconds: observation.positionSeconds }
+          : {}),
+        ...(observation.durationSeconds !== undefined
+          ? { durationSeconds: observation.durationSeconds }
+          : {}),
+        ...(observation.fullscreen !== undefined ? { fullscreen: observation.fullscreen } : {})
+      });
+      return undefined;
+    case "paused":
+      await client.updateQueueStatus(queueEntryId, "paused");
+      await apply(positionEvent("PAUSED", observation.positionSeconds));
+      return undefined;
+    case "buffering":
+      await apply({ type: "BUFFERING" });
+      return undefined;
+    case "blocked":
+      if (await streamingAdapter.dismissKnownInterruptions(context)) {
+        await apply({ type: "RECOVERING", attempt: state.recoveryAttempt + 1 });
+        return undefined;
+      }
+      await fail(
+        queueEntryId,
+        observation.errorCode ?? "blocked",
+        observation.dialog ?? "Playback blocked."
+      );
+      return "failed";
+    case "error":
+      await fail(
+        queueEntryId,
+        observation.errorCode ?? "adapter-error",
+        "Adapter reported playback error."
+      );
+      return "failed";
+    case "completed":
+      await client.updateQueueStatus(queueEntryId, "completed", {
+        completedAt: new Date().toISOString()
+      });
+      await apply(positionEvent("COMPLETED", observation.positionSeconds));
+      return "completed";
+  }
+}
+
+async function fail(queueEntryId: string, code: string, message: string): Promise<void> {
+  await client.updateQueueStatus(queueEntryId, "failed", {
+    completedAt: new Date().toISOString(),
+    lastErrorCode: code,
+    lastErrorMessage: message
+  });
+  await apply({ type: "FAILED", code, message });
+}
+
+async function apply(event: PlaybackStateEvent): Promise<void> {
+  const result = transition(state, event, {
+    createId: () => crypto.randomUUID(),
+    now: () => new Date()
+  });
+  state = result.state;
+  await client.appendEvent(result.event);
+}
+
+function canApplyCommand(command: PlaybackCommand, phase: PlaybackState["phase"]): boolean {
+  switch (command.type) {
+    case "pause":
+      return phase === "playing" || phase === "buffering";
+    case "resume":
+      return phase === "paused";
+    case "skip":
+    case "stop":
+      return !["idle", "failed"].includes(phase);
+    default:
+      return false;
+  }
+}
+
+function positionEvent(
+  type: "HEARTBEAT" | "PAUSED" | "COMPLETED",
+  positionSeconds: number | undefined
+): PlaybackStateEvent {
+  return {
+    type,
+    ...(positionSeconds !== undefined ? { positionSeconds } : {})
+  };
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+class ServerClient {
+  public constructor(private readonly baseUrl: string) {}
+
+  public heartbeat(applianceId: string, name: string, playbackState: PlaybackState) {
+    return this.post<{ playback: { enabled: boolean; loopEnabled: boolean } }>(
+      "/api/v1/appliance/heartbeat",
+      {
+        applianceId,
+        name,
+        state: playbackState
+      }
+    );
+  }
+
+  public claimNextQueueEntry() {
+    return this.post<QueueEntry | undefined>("/api/v1/appliance/queue/next", {});
+  }
+
+  public getMedia(id: string) {
+    return this.get<MediaItem>(`/api/v1/appliance/media/${id}`);
+  }
+
+  public enqueue(mediaItemId: string, priority: number) {
+    return this.post<QueueEntry>("/api/v1/appliance/queue", { mediaItemId, priority });
+  }
+
+  public pendingCommands() {
+    return this.get<PlaybackCommand[]>("/api/v1/appliance/commands");
+  }
+
+  public updateCommand(id: string, status: PlaybackCommand["status"]) {
+    return this.post(`/api/v1/appliance/commands/${id}/status`, { status });
+  }
+
+  public updateQueueStatus(
+    id: string,
+    status: QueueEntry["status"],
+    fields: Record<string, unknown> = {}
+  ) {
+    return this.post(`/api/v1/appliance/queue/${id}/status`, { status, ...fields });
+  }
+
+  public appendEvent(event: {
+    id: string;
+    type: string;
+    queueEntryId?: string;
+    mediaItemId?: string;
+    details: Record<string, unknown>;
+    createdAt: string;
+  }) {
+    return this.post("/api/v1/appliance/events", event);
+  }
+
+  private async get<T>(path: string): Promise<T> {
+    return this.request<T>("GET", path);
+  }
+
+  private async post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    return this.request<T>("POST", path, body);
+  }
+
+  private async request<T>(
+    method: "GET" | "POST",
+    path: string,
+    body?: Record<string, unknown>
+  ): Promise<T> {
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      ...(body
+        ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } }
+        : {})
+    });
+
+    if (!response.ok) {
+      throw new Error(`${method} ${path} failed with ${response.status}`);
+    }
+
+    return (await response.json()) as T;
+  }
+}
+
+const client = new ServerClient(config.values.serverUrl);
+
+void main();
