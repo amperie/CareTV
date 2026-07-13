@@ -5,6 +5,12 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "references": [{ "path": "../../packages/core" }],
+  "references": [
+    { "path": "../../packages/adapters" },
+    { "path": "../../packages/config" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/database" },
+    { "path": "../../packages/state-machine" }
+  ],
   "include": ["src/**/*.ts"]
 }

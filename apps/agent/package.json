@@ -9,7 +9,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@caretv/core": "workspace:*"
+    "@caretv/adapters": "workspace:*",
+    "@caretv/config": "workspace:*",
+    "@caretv/core": "workspace:*",
+    "@caretv/database": "workspace:*",
+    "@caretv/state-machine": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2"

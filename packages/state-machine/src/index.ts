@@ -188,8 +188,16 @@ const allowedTransitions: Record<PlaybackPhase, ReadonlySet<PlaybackStateEvent["
   idle: new Set(["QUEUE_SELECTED", "HEARTBEAT"]),
   "launching-browser": new Set(["BROWSER_LAUNCHED", "FAILED", "STOPPED", "HEARTBEAT"]),
   loading: new Set(["READY", "FAILED", "RECOVERING", "STOPPED", "HEARTBEAT"]),
-  "awaiting-play": new Set(["PLAYING", "FAILED", "RECOVERING", "STOPPED", "HEARTBEAT"]),
+  "awaiting-play": new Set([
+    "PLAYING",
+    "COMPLETED",
+    "FAILED",
+    "RECOVERING",
+    "STOPPED",
+    "HEARTBEAT"
+  ]),
   playing: new Set([
+    "PLAYING",
     "PAUSED",
     "BUFFERING",
     "RECOVERING",
@@ -198,8 +206,8 @@ const allowedTransitions: Record<PlaybackPhase, ReadonlySet<PlaybackStateEvent["
     "STOPPED",
     "HEARTBEAT"
   ]),
-  paused: new Set(["RESUMED", "FAILED", "STOPPED", "HEARTBEAT"]),
-  buffering: new Set(["PLAYING", "RECOVERING", "FAILED", "STOPPED", "HEARTBEAT"]),
+  paused: new Set(["PAUSED", "RESUMED", "FAILED", "STOPPED", "HEARTBEAT"]),
+  buffering: new Set(["BUFFERING", "PLAYING", "RECOVERING", "FAILED", "STOPPED", "HEARTBEAT"]),
   ending: new Set(["COMPLETED", "FAILED", "STOPPED", "HEARTBEAT"]),
   recovering: new Set(["PLAYING", "FAILED", "STOPPED", "HEARTBEAT"]),
   failed: new Set(["QUEUE_SELECTED", "STOPPED", "HEARTBEAT"])
