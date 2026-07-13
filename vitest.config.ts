@@ -7,6 +7,8 @@ export default defineConfig({
       "@caretv/config": new URL("./packages/config/src/index.ts", import.meta.url).pathname,
       "@caretv/core": new URL("./packages/core/src/index.ts", import.meta.url).pathname,
       "@caretv/database": new URL("./packages/database/src/index.ts", import.meta.url).pathname,
+      "@caretv/playback-agent": new URL("./packages/playback-agent/src/index.ts", import.meta.url)
+        .pathname,
       "@caretv/state-machine": new URL("./packages/state-machine/src/index.ts", import.meta.url)
         .pathname
     }

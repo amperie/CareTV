@@ -66,6 +66,14 @@ export class MediaRepository {
     return rows.map(mapMediaRow);
   }
 
+  public list(): MediaItem[] {
+    const rows = this.db
+      .prepare("SELECT * FROM media_items WHERE deleted_at IS NULL ORDER BY created_at DESC")
+      .all() as unknown as MediaRow[];
+
+    return rows.map(mapMediaRow);
+  }
+
   public softDelete(id: string, deletedAt: string): void {
     this.db
       .prepare("UPDATE media_items SET deleted_at = ?, updated_at = ? WHERE id = ?")

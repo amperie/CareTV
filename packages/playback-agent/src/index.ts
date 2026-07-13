@@ -25,6 +25,8 @@ export interface PlaybackAgentOptions {
   createId?: () => string;
   maxObservations?: number;
   now?: () => Date;
+  observeIntervalMs?: number;
+  onStateChange?: (state: PlaybackState) => void;
 }
 
 export class PlaybackAgent {
@@ -33,6 +35,10 @@ export class PlaybackAgent {
 
   public constructor(private readonly options: PlaybackAgentOptions) {
     this.state = createIdleState(this.now());
+  }
+
+  public getState(): PlaybackState {
+    return this.state;
   }
 
   public async runOnce(): Promise<AgentRunResult> {
@@ -113,6 +119,10 @@ export class PlaybackAgent {
 
       if (result) {
         return result;
+      }
+
+      if (this.options.observeIntervalMs && this.options.observeIntervalMs > 0) {
+        await sleep(this.options.observeIntervalMs);
       }
     }
 
@@ -234,13 +244,14 @@ export class PlaybackAgent {
     this.apply({ type: "FAILED", code, message });
   }
 
-  private apply(event: Parameters<typeof transition>[1]): void {
+  private apply(event: PlaybackStateEvent): void {
     const result = transition(this.state, event, {
       createId: this.options.createId ?? (() => crypto.randomUUID()),
       now: () => this.now()
     });
     this.state = result.state;
     this.options.events.append(result.event);
+    this.options.onStateChange?.(this.state);
   }
 
   private findAdapter(item: MediaItem): StreamingAdapter | undefined {
@@ -277,4 +288,10 @@ function playingEvent(observation: PlaybackObservation): PlaybackStateEvent {
       : {}),
     ...(observation.fullscreen !== undefined ? { fullscreen: observation.fullscreen } : {})
   };
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
 }

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "corepack pnpm -r build",
-    "dev": "corepack pnpm -r --parallel dev",
+    "dev": "corepack pnpm --parallel --filter @caretv/server --filter @caretv/web dev",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "lint": "eslint .",

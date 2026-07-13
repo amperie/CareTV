@@ -47,9 +47,24 @@ importers:
 
   apps/agent:
     dependencies:
+      '@caretv/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
+      '@caretv/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@caretv/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@caretv/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@caretv/playback-agent':
+        specifier: workspace:*
+        version: link:../../packages/playback-agent
+      '@caretv/state-machine':
+        specifier: workspace:*
+        version: link:../../packages/state-machine
     devDependencies:
       tsx:
         specifier: ^4.19.2
@@ -57,12 +72,21 @@ importers:
 
   apps/server:
     dependencies:
+      '@caretv/adapters':
+        specifier: workspace:*
+        version: link:../../packages/adapters
       '@caretv/config':
         specifier: workspace:*
         version: link:../../packages/config
       '@caretv/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@caretv/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@caretv/playback-agent':
+        specifier: workspace:*
+        version: link:../../packages/playback-agent
       fastify:
         specifier: ^5.2.1
         version: 5.10.0
@@ -103,6 +127,12 @@ importers:
         specifier: ^19.0.3
         version: 19.2.3(@types/react@19.2.17)
 
+  packages/adapters:
+    dependencies:
+      '@caretv/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/config:
     dependencies:
       zod:
@@ -110,6 +140,33 @@ importers:
         version: 3.24.1
 
   packages/core: {}
+
+  packages/database:
+    dependencies:
+      '@caretv/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/playback-agent:
+    dependencies:
+      '@caretv/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@caretv/core':
+        specifier: workspace:*
+        version: link:../core
+      '@caretv/database':
+        specifier: workspace:*
+        version: link:../database
+      '@caretv/state-machine':
+        specifier: workspace:*
+        version: link:../state-machine
+
+  packages/state-machine:
+    dependencies:
+      '@caretv/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 

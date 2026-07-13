@@ -12,9 +12,8 @@ import {
   PlaybackEventRepository,
   QueueRepository
 } from "@caretv/database";
+import { PlaybackAgent } from "@caretv/playback-agent";
 import { describe, expect, it } from "vitest";
-
-import { PlaybackAgent } from "./playbackAgent.js";
 
 const logger = {
   info: () => undefined,
@@ -31,9 +30,7 @@ describe("PlaybackAgent", () => {
       const result = await harness.agent.runOnce();
 
       expect(result).toEqual({ status: "completed", queueEntryId: "queue-1" });
-      expect(harness.queue.get("queue-1")).toMatchObject({
-        status: "completed"
-      });
+      expect(harness.queue.get("queue-1")).toMatchObject({ status: "completed" });
       expect(harness.events.listRecent(20).map((event) => event.type)).toContain("COMPLETED");
     });
   });

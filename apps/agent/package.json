@@ -13,6 +13,7 @@
     "@caretv/config": "workspace:*",
     "@caretv/core": "workspace:*",
     "@caretv/database": "workspace:*",
+    "@caretv/playback-agent": "workspace:*",
     "@caretv/state-machine": "workspace:*"
   },
   "devDependencies": {

@@ -2,8 +2,11 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "paths": {
+      "@caretv/adapters": ["packages/adapters/dist/index.d.ts"],
       "@caretv/config": ["packages/config/dist/index.d.ts"],
-      "@caretv/core": ["packages/core/dist/index.d.ts"]
+      "@caretv/core": ["packages/core/dist/index.d.ts"],
+      "@caretv/database": ["packages/database/dist/index.d.ts"],
+      "@caretv/playback-agent": ["packages/playback-agent/dist/index.d.ts"]
     }
   }
 }

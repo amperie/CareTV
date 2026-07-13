@@ -10,8 +10,7 @@ import {
   PlaybackEventRepository,
   QueueRepository
 } from "@caretv/database";
-
-import { PlaybackAgent } from "./playbackAgent.js";
+import { PlaybackAgent } from "@caretv/playback-agent";
 
 const config = loadConfig();
 const db = openDatabase(join(config.values.runtimeDir, "caretv.sqlite"));

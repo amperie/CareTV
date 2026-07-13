@@ -39,6 +39,8 @@ describe("database repositories", () => {
       queue.enqueue(fakeQueueEntry("entry-1", "media-1", 2));
       queue.enqueue(fakeQueueEntry("entry-2", "media-1", 1));
 
+      expect(queue.nextPosition()).toBe(3);
+      expect(queue.list().map((entry) => entry.id)).toEqual(["entry-2", "entry-1"]);
       expect(queue.selectNextQueued(now)?.id).toBe("entry-2");
       expect(queue.get("entry-2")?.status).toBe("starting");
       expect(() => queue.selectNextQueued(now)).toThrow();

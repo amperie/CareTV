@@ -10,6 +10,7 @@
     { "path": "../../packages/config" },
     { "path": "../../packages/core" },
     { "path": "../../packages/database" },
+    { "path": "../../packages/playback-agent" },
     { "path": "../../packages/state-machine" }
   ],
   "include": ["src/**/*.ts"]

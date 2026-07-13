@@ -54,6 +54,25 @@ Default local endpoints:
 - server health: `http://127.0.0.1:4010/health`
 - web dashboard: `http://127.0.0.1:4020`
 
+## Fake Playback Lab
+
+The dashboard can currently add fake media items, enqueue them, start fake playback, and show
+state/event output.
+
+1. Start the local server and dashboard:
+
+   ```powershell
+   .\scripts\start-dev.ps1
+   ```
+
+2. Open `http://127.0.0.1:4020`.
+3. Add one or more fake items.
+4. Click `Start`.
+5. Watch the output panel, queue statuses, and event log update as items play through.
+
+The playback is deterministic fake playback only. It does not open Chrome or use any streaming
+service yet.
+
 ## Runtime Data
 
 Runtime data must stay outside source control. Use `.env.example` as the starting point and

@@ -18,6 +18,7 @@
       "@caretv/config": ["packages/config/src/index.ts"],
       "@caretv/core": ["packages/core/src/index.ts"],
       "@caretv/database": ["packages/database/src/index.ts"],
+      "@caretv/playback-agent": ["packages/playback-agent/src/index.ts"],
       "@caretv/state-machine": ["packages/state-machine/src/index.ts"]
     },
     "resolveJsonModule": true,
