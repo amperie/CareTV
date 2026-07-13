@@ -281,7 +281,17 @@ app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
     return { error: "unsupported-status" };
   }
 
-  queue.updateStatus(routeParam(request.params, "id"), status, optionalStrings(body));
+  const updated = queue.updateStatus(
+    routeParam(request.params, "id"),
+    status,
+    optionalStrings(body)
+  );
+
+  if (!updated) {
+    reply.code(409);
+    return { error: "queue-entry-status-conflict" };
+  }
+
   return { ok: true };
 });
 

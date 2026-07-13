@@ -44,7 +44,7 @@ describe("database repositories", () => {
       expect(queue.list().map((entry) => entry.id)).toEqual(["entry-2", "entry-1"]);
       expect(queue.selectNextQueued(now)?.id).toBe("entry-2");
       expect(queue.get("entry-2")?.status).toBe("starting");
-      expect(() => queue.selectNextQueued(now)).toThrow();
+      expect(queue.selectNextQueued(now)).toBeUndefined();
     });
   });
 
@@ -64,35 +64,38 @@ describe("database repositories", () => {
     });
   });
 
-  it("supersedes stale active entries when a new entry reports active playback", () => {
-    withMigratedDatabase((db) => {
-      const media = new MediaRepository(db);
-      const queue = new QueueRepository(db);
-
-      media.create(fakeMedia("media-1"));
-      queue.enqueue({ ...fakeQueueEntry("stale", "media-1", 1), status: "playing" });
-      queue.enqueue({ ...fakeQueueEntry("current", "media-1", 2), status: "starting" });
-
-      expect(() => queue.updateStatus("current", "playing")).not.toThrow();
-      expect(queue.get("stale")).toMatchObject({
-        status: "failed",
-        lastErrorCode: "superseded-by-active-playback"
-      });
-      expect(queue.get("current")).toMatchObject({ status: "playing" });
-    });
-  });
-
-  it("does not supersede active entries for missing queue ids", () => {
+  it("rejects competing active playback updates", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);
       const queue = new QueueRepository(db);
 
       media.create(fakeMedia("media-1"));
       queue.enqueue({ ...fakeQueueEntry("active", "media-1", 1), status: "playing" });
+      queue.enqueue(fakeQueueEntry("current", "media-1", 2));
 
-      queue.updateStatus("missing", "playing");
-
+      expect(queue.updateStatus("current", "playing")).toBe(false);
       expect(queue.get("active")).toMatchObject({ status: "playing" });
+      expect(queue.get("current")).toMatchObject({ status: "queued" });
+    });
+  });
+
+  it("does not overwrite terminal queue status", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("failed", "media-1", 1),
+        status: "failed",
+        lastErrorCode: "agent-error"
+      });
+
+      expect(queue.updateStatus("failed", "completed")).toBe(false);
+      expect(queue.get("failed")).toMatchObject({
+        status: "failed",
+        lastErrorCode: "agent-error"
+      });
     });
   });
 

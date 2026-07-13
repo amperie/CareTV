@@ -48,6 +48,11 @@ export class QueueRepository {
   public selectNextQueued(now: string): QueueEntry | undefined {
     this.db.exec("BEGIN IMMEDIATE;");
     try {
+      if (this.activeCount() > 0) {
+        this.db.exec("COMMIT;");
+        return undefined;
+      }
+
       const row = this.db
         .prepare(
           `
@@ -84,28 +89,45 @@ export class QueueRepository {
       lastErrorCode?: string;
       lastErrorMessage?: string;
     } = {}
-  ): void {
-    if (isActiveStatus(status) && this.get(id)) {
-      this.reconcileOtherActive(id, "failed", "superseded-by-active-playback");
+  ): boolean {
+    const current = this.get(id);
+
+    if (!current || isTerminalStatus(current.status)) {
+      return false;
     }
 
-    this.db
+    if (isActiveStatus(status) && this.otherActiveCount(id) > 0) {
+      return false;
+    }
+
+    const result = this.db
       .prepare(
         `
           UPDATE queue_entries
-          SET status = ?, completed_at = COALESCE(?, completed_at),
-              last_error_code = COALESCE(?, last_error_code),
-              last_error_message = COALESCE(?, last_error_message)
+          SET status = ?,
+              completed_at = COALESCE(?, completed_at),
+              last_error_code = CASE
+                WHEN ? IN ('completed', 'skipped') THEN NULL
+                ELSE COALESCE(?, last_error_code)
+              END,
+              last_error_message = CASE
+                WHEN ? IN ('completed', 'skipped') THEN NULL
+                ELSE COALESCE(?, last_error_message)
+              END
           WHERE id = ?
         `
       )
       .run(
         status,
         fields.completedAt ?? null,
+        status,
         fields.lastErrorCode ?? null,
+        status,
         fields.lastErrorMessage ?? null,
         id
       );
+
+    return Number(result.changes) > 0;
   }
 
   public remove(id: string): boolean {
@@ -122,20 +144,6 @@ export class QueueRepository {
         "DELETE FROM queue_entries WHERE status IN ('completed', 'failed', 'skipped', 'cancelled')"
       )
       .run();
-
-    return Number(result.changes);
-  }
-
-  private reconcileOtherActive(id: string, status: QueueEntryStatus, errorCode: string): number {
-    const result = this.db
-      .prepare(
-        `
-          UPDATE queue_entries
-          SET status = ?, last_error_code = ?
-          WHERE id != ? AND status IN ('starting', 'playing', 'paused')
-        `
-      )
-      .run(status, errorCode, id);
 
     return Number(result.changes);
   }
@@ -217,10 +225,36 @@ export class QueueRepository {
 
     return row?.position ?? 1;
   }
+
+  private activeCount(): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM queue_entries WHERE status IN ('starting', 'playing', 'paused')"
+      )
+      .get() as { count: number } | undefined;
+
+    return row?.count ?? 0;
+  }
+
+  private otherActiveCount(id: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM queue_entries WHERE id != ? AND status IN ('starting', 'playing', 'paused')"
+      )
+      .get(id) as { count: number } | undefined;
+
+    return row?.count ?? 0;
+  }
 }
 
 function isActiveStatus(status: QueueEntryStatus): boolean {
   return status === "starting" || status === "playing" || status === "paused";
+}
+
+function isTerminalStatus(status: QueueEntryStatus): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "skipped" || status === "cancelled"
+  );
 }
 
 function mapQueueRow(row: QueueRow): QueueEntry {
