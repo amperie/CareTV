@@ -137,6 +137,7 @@ export class PlaybackAgent {
   ): Promise<AgentRunResult | undefined> {
     for (const command of this.options.commands.listPending()) {
       if (command.mediaItemId && command.mediaItemId !== context.mediaItem.id) {
+        this.options.commands.updateStatus(command.id, "failed");
         continue;
       }
 

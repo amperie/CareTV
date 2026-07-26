@@ -270,6 +270,7 @@ async function applyCommands(
 ): Promise<"skipped" | undefined> {
   for (const command of await client.pendingCommands()) {
     if (command.mediaItemId && command.mediaItemId !== context.mediaItem.id) {
+      await client.updateCommand(command.id, "failed");
       continue;
     }
 
@@ -665,7 +666,9 @@ function isInsideMediaDir(localPath: string): boolean {
   const mediaDir = resolve(config.values.applianceMediaDir);
   const target = resolve(localPath);
   const pathFromMediaDir = relative(mediaDir, target);
-  return Boolean(pathFromMediaDir) && !pathFromMediaDir.startsWith("..") && !isAbsolute(pathFromMediaDir);
+  return (
+    Boolean(pathFromMediaDir) && !pathFromMediaDir.startsWith("..") && !isAbsolute(pathFromMediaDir)
+  );
 }
 
 function isMissingFileError(error: unknown): boolean {

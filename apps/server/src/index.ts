@@ -407,7 +407,14 @@ app.post("/api/v1/commands", (request, reply) => {
     return { error: "unsupported-command" };
   }
 
-  const command = createCommand(type);
+  const active = queue.active();
+
+  if (!active) {
+    reply.code(409);
+    return { error: "no-active-playback" };
+  }
+
+  const command = createCommand(type, active.mediaItemId);
 
   commands.create(command);
   reply.code(201);
@@ -848,7 +855,9 @@ async function titleForStreamingUrl(
 }
 
 async function titleForYouTubeUrl(url: string, fallback?: string): Promise<string> {
-  return (await fetchYouTubeTitle(url)) ?? (await titleForStreamingUrl(url, fallback, "YouTube Video"));
+  return (
+    (await fetchYouTubeTitle(url)) ?? (await titleForStreamingUrl(url, fallback, "YouTube Video"))
+  );
 }
 
 async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
@@ -857,7 +866,7 @@ async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
     endpoint.searchParams.set("url", url);
     endpoint.searchParams.set("format", "json");
     const response = await fetch(endpoint, {
-      headers: { "accept": "application/json" },
+      headers: { accept: "application/json" },
       signal: AbortSignal.timeout(5000)
     });
 
@@ -876,7 +885,7 @@ async function fetchStreamingTitle(url: string): Promise<string | undefined> {
   try {
     const response = await fetch(url, {
       headers: {
-        "accept": "text/html",
+        accept: "text/html",
         "user-agent": "Mozilla/5.0 CareTV title resolver"
       },
       signal: AbortSignal.timeout(5000)

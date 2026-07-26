@@ -62,7 +62,10 @@ export class ChromeBrowser {
 
 class CdpBrowserPage implements BrowserPage {
   private id = 0;
-  private readonly pending = new Map<number, { reject: (error: Error) => void; resolve: (value: unknown) => void }>();
+  private readonly pending = new Map<
+    number,
+    { reject: (error: Error) => void; resolve: (value: unknown) => void }
+  >();
 
   private constructor(private readonly socket: WebSocketLike) {
     socket.addEventListener("message", (event: { data?: unknown }) => {
@@ -93,8 +96,7 @@ class CdpBrowserPage implements BrowserPage {
 
   public static async connect(webSocketUrl: string): Promise<CdpBrowserPage> {
     const WebSocketCtor = globalThis.WebSocket as unknown as
-      | (new (url: string) => WebSocketLike)
-      | undefined;
+      (new (url: string) => WebSocketLike) | undefined;
 
     if (!WebSocketCtor) {
       throw new Error("Global WebSocket is required for Chrome DevTools control.");

@@ -123,7 +123,9 @@ export class MediaRepository {
 
   public deletedLocalPathExists(localPath: string): boolean {
     const row = this.db
-      .prepare("SELECT COUNT(*) AS count FROM media_items WHERE local_path = ? AND deleted_at IS NOT NULL")
+      .prepare(
+        "SELECT COUNT(*) AS count FROM media_items WHERE local_path = ? AND deleted_at IS NOT NULL"
+      )
       .get(localPath) as { count: number } | undefined;
 
     return (row?.count ?? 0) > 0;

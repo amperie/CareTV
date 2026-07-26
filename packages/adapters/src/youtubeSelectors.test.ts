@@ -38,4 +38,28 @@ describe("youtube selectors", () => {
       status: "blocked"
     });
   });
+
+  it("does not treat a completed preroll ad as completed content", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          adShowing: true,
+          currentTime: 15,
+          duration: 15,
+          ended: true,
+          fullscreen: true,
+          hasVideo: true,
+          paused: true,
+          readyState: 4,
+          text: ""
+        },
+        900
+      )
+    ).toMatchObject({
+      durationSeconds: 15,
+      fullscreen: true,
+      positionSeconds: 15,
+      status: "buffering"
+    });
+  });
 });

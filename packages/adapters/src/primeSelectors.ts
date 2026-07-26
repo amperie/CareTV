@@ -10,7 +10,10 @@ const blockerPatterns = [
   { code: "prime-profile-required", pattern: /who'?s watching|select a profile/i },
   { code: "prime-purchase-required", pattern: /rent|buy|purchase/i },
   { code: "prime-unavailable", pattern: /currently unavailable|not available|location/i },
-  { code: "prime-playback-error", pattern: /something went wrong|video unavailable|playback error/i }
+  {
+    code: "prime-playback-error",
+    pattern: /something went wrong|video unavailable|playback error/i
+  }
 ];
 
 export const primeSelectors = {
@@ -19,11 +22,7 @@ export const primeSelectors = {
     "[aria-label*='Fullscreen' i]",
     "[data-testid*='fullscreen' i]"
   ],
-  playButton: [
-    "[aria-label*='Resume' i]",
-    "[aria-label*='Play' i]",
-    "[data-testid*='play' i]"
-  ],
+  playButton: ["[aria-label*='Resume' i]", "[aria-label*='Play' i]", "[data-testid*='play' i]"],
   video: "video"
 };
 

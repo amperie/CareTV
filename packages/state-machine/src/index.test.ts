@@ -55,6 +55,52 @@ describe("playback state machine", () => {
     );
   });
 
+  it("allows initial buffering before playback starts", () => {
+    const selected = transition(
+      createIdleState(date),
+      {
+        type: "QUEUE_SELECTED",
+        queueEntryId: "queue-1",
+        mediaItemId: "media-1",
+        adapterId: "youtube",
+        title: "Test"
+      },
+      options
+    );
+    const launched = transition(selected.state, { type: "BROWSER_LAUNCHED" }, options);
+    const ready = transition(launched.state, { type: "READY" }, options);
+    const buffering = transition(ready.state, { type: "BUFFERING" }, options);
+
+    expect(buffering.state.phase).toBe("buffering");
+    expect(buffering.event.details).toMatchObject({
+      from: "awaiting-play",
+      to: "buffering"
+    });
+  });
+
+  it("allows initial paused state before playback starts", () => {
+    const selected = transition(
+      createIdleState(date),
+      {
+        type: "QUEUE_SELECTED",
+        queueEntryId: "queue-1",
+        mediaItemId: "media-1",
+        adapterId: "youtube",
+        title: "Test"
+      },
+      options
+    );
+    const launched = transition(selected.state, { type: "BROWSER_LAUNCHED" }, options);
+    const ready = transition(launched.state, { type: "READY" }, options);
+    const paused = transition(ready.state, { type: "PAUSED", positionSeconds: 0 }, options);
+
+    expect(paused.state.phase).toBe("paused");
+    expect(paused.event.details).toMatchObject({
+      from: "awaiting-play",
+      to: "paused"
+    });
+  });
+
   it("records failure details", () => {
     const result = transition(
       {

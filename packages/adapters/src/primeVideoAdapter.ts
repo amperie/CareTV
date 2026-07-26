@@ -7,11 +7,7 @@ import type {
   RecoveryResult,
   StreamingAdapter
 } from "./contract.js";
-import {
-  observationFromPrimeDom,
-  primeSelectors,
-  type PrimeDomState
-} from "./primeSelectors.js";
+import { observationFromPrimeDom, primeSelectors, type PrimeDomState } from "./primeSelectors.js";
 import { durationSecondsFor } from "./videoObservation.js";
 
 interface PrimeSession {
@@ -34,7 +30,9 @@ export class PrimeVideoAdapter implements StreamingAdapter {
       ? undefined
       : new ChromeBrowser({
           ...(options.chromePath ? { chromePath: options.chromePath } : {}),
-          ...(options.remoteDebuggingPort ? { remoteDebuggingPort: options.remoteDebuggingPort } : {}),
+          ...(options.remoteDebuggingPort
+            ? { remoteDebuggingPort: options.remoteDebuggingPort }
+            : {}),
           ...(options.userDataDir ? { userDataDir: options.userDataDir } : {})
         });
     this.openPage = options.openPage ?? ((url) => browser!.open(url));
@@ -98,7 +96,9 @@ export class PrimeVideoAdapter implements StreamingAdapter {
       return;
     }
 
-    await page.evaluate<void>(`document.querySelector("${primeSelectors.video}")?.requestFullscreen?.()`);
+    await page.evaluate<void>(
+      `document.querySelector("${primeSelectors.video}")?.requestFullscreen?.()`
+    );
   }
 
   public async observe(context: AdapterContext): Promise<PlaybackObservation> {

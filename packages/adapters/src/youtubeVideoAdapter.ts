@@ -34,7 +34,9 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
       ? undefined
       : new ChromeBrowser({
           ...(options.chromePath ? { chromePath: options.chromePath } : {}),
-          ...(options.remoteDebuggingPort ? { remoteDebuggingPort: options.remoteDebuggingPort } : {}),
+          ...(options.remoteDebuggingPort
+            ? { remoteDebuggingPort: options.remoteDebuggingPort }
+            : {}),
           ...(options.userDataDir ? { userDataDir: options.userDataDir } : {})
         });
     this.openPage = options.openPage ?? ((url) => browser!.open(url));
@@ -95,13 +97,21 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
       return;
     }
 
-    await page.waitForSelector([youtubeSelectors.video, ...youtubeSelectors.fullscreenButton], 5_000);
+    await page.waitForSelector(
+      [youtubeSelectors.video, ...youtubeSelectors.fullscreenButton],
+      5_000
+    );
 
     if (await page.clickFirst(youtubeSelectors.fullscreenButton)) {
-      return;
+      await wait(500);
     }
 
-    await page.evaluate<void>(`document.querySelector("${youtubeSelectors.video}")?.requestFullscreen?.()`);
+    await page.evaluate<void>(`(() => {
+      if (document.fullscreenElement) return;
+      const player = document.querySelector(".html5-video-player");
+      const video = document.querySelector("${youtubeSelectors.video}");
+      return (player?.requestFullscreen?.() ?? video?.requestFullscreen?.())?.catch?.(() => undefined);
+    })()`);
   }
 
   public async observe(context: AdapterContext): Promise<PlaybackObservation> {
@@ -115,11 +125,19 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     await this.dismissKnownInterruptions(context);
     const state = await page.evaluate<YouTubeDomState>(`(() => {
       const video = document.querySelector("${youtubeSelectors.video}");
+      const player = document.querySelector(".html5-video-player");
       return {
+        adShowing: Boolean(
+          player?.classList.contains("ad-showing") ||
+          document.querySelector(".ytp-ad-player-overlay, .ytp-ad-text")
+        ),
         currentTime: video?.currentTime,
         duration: Number.isFinite(video?.duration) ? video.duration : undefined,
         ended: video?.ended,
-        fullscreen: document.fullscreenElement === video,
+        fullscreen: Boolean(
+          document.fullscreenElement &&
+          (document.fullscreenElement === video || document.fullscreenElement === player)
+        ),
         hasVideo: Boolean(video),
         paused: video?.paused,
         readyState: video?.readyState,
@@ -137,12 +155,21 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     }
 
     const skippedAd = await page.clickFirst(youtubeSelectors.skipAdButton);
-    const dismissed = await page.clickByText(["skip ads", "skip ad", "no thanks", "not now", "i agree"]);
+    const dismissed = await page.clickByText([
+      "skip ads",
+      "skip ad",
+      "no thanks",
+      "not now",
+      "i agree"
+    ]);
     return skippedAd || dismissed;
   }
 
   public recover(): Promise<RecoveryResult> {
-    return Promise.resolve({ recovered: false, message: "YouTube recovery is not implemented yet." });
+    return Promise.resolve({
+      recovered: false,
+      message: "YouTube recovery is not implemented yet."
+    });
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
@@ -197,4 +224,8 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new Error("Adapter operation was aborted.");
   }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

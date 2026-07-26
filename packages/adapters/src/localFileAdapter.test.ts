@@ -70,7 +70,9 @@ describe("local file adapter", () => {
   });
 
   it("rejects missing local files during preparation", async () => {
-    const adapter = new LocalFileAdapter({ openPlayer: () => Promise.resolve(new FakePlayerPage(1)) });
+    const adapter = new LocalFileAdapter({
+      openPlayer: () => Promise.resolve(new FakePlayerPage(1))
+    });
     const context = localContext(localMedia("Z:\\missing.mp4", 10));
 
     await expect(adapter.prepare(context)).rejects.toThrow();

@@ -138,7 +138,10 @@ export class LocalFileAdapter implements StreamingAdapter {
   }
 
   public recover(): Promise<RecoveryResult> {
-    return Promise.resolve({ recovered: false, message: "Local file recovery is not implemented." });
+    return Promise.resolve({
+      recovered: false,
+      message: "Local file recovery is not implemented."
+    });
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
@@ -218,7 +221,10 @@ class ChromeLocalPlayerBrowser {
 
 class CdpPlayerPage implements PlayerPage {
   private id = 0;
-  private readonly pending = new Map<number, { reject: (error: Error) => void; resolve: (value: unknown) => void }>();
+  private readonly pending = new Map<
+    number,
+    { reject: (error: Error) => void; resolve: (value: unknown) => void }
+  >();
 
   private constructor(private readonly socket: WebSocketLike) {
     socket.addEventListener("message", (event: { data?: unknown }) => {
@@ -249,8 +255,7 @@ class CdpPlayerPage implements PlayerPage {
 
   public static async connect(webSocketUrl: string): Promise<CdpPlayerPage> {
     const WebSocketCtor = globalThis.WebSocket as unknown as
-      | (new (url: string) => WebSocketLike)
-      | undefined;
+      (new (url: string) => WebSocketLike) | undefined;
 
     if (!WebSocketCtor) {
       throw new Error("Global WebSocket is required for Chrome DevTools control.");
@@ -279,7 +284,7 @@ class CdpPlayerPage implements PlayerPage {
     const deadline = Date.now() + timeoutMs;
 
     while (Date.now() < deadline) {
-      if (await this.evaluate("Boolean(window.caretv)") === true) {
+      if ((await this.evaluate("Boolean(window.caretv)")) === true) {
         return true;
       }
 
@@ -476,7 +481,9 @@ function findChromePath(): string {
 }
 
 function durationSecondsFor(item: MediaItem, browserDuration: number | undefined): number {
-  const duration = browserDuration ?? numberValue(item.metadata.durationSeconds, item.expectedDurationSeconds ?? 60);
+  const duration =
+    browserDuration ??
+    numberValue(item.metadata.durationSeconds, item.expectedDurationSeconds ?? 60);
   return Math.max(1, Math.floor(duration));
 }
 

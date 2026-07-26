@@ -88,7 +88,12 @@ function App() {
   }
 
   async function addPrimeItem() {
-    await addStreamingItem("/prime-queue", primeUrl, setPrimeUrl, "Enter an Amazon Prime Video URL.");
+    await addStreamingItem(
+      "/prime-queue",
+      primeUrl,
+      setPrimeUrl,
+      "Enter an Amazon Prime Video URL."
+    );
   }
 
   async function addYoutubeItem() {
@@ -441,28 +446,28 @@ function App() {
                         ) : null}
                         {entry.status === "queued" ? (
                           <>
-                        <button
-                          className="icon-button"
-                          disabled={status?.running || !canMoveUp}
-                          onClick={() => void moveQueueEntry(entry.id, "up")}
-                          title={canMoveUp && !status?.running ? "Move up" : disabledReason}
-                        >
-                          Up
-                        </button>
-                        <button
-                          className="icon-button"
-                          disabled={status?.running || !canMoveDown}
-                          onClick={() => void moveQueueEntry(entry.id, "down")}
-                          title={canMoveDown && !status?.running ? "Move down" : disabledReason}
-                        >
-                          Down
-                        </button>
-                        <button
-                          className="icon-button danger"
-                          onClick={() => void removeQueueEntry(entry.id)}
-                        >
-                          Remove
-                        </button>
+                            <button
+                              className="icon-button"
+                              disabled={status?.running || !canMoveUp}
+                              onClick={() => void moveQueueEntry(entry.id, "up")}
+                              title={canMoveUp && !status?.running ? "Move up" : disabledReason}
+                            >
+                              Up
+                            </button>
+                            <button
+                              className="icon-button"
+                              disabled={status?.running || !canMoveDown}
+                              onClick={() => void moveQueueEntry(entry.id, "down")}
+                              title={canMoveDown && !status?.running ? "Move down" : disabledReason}
+                            >
+                              Down
+                            </button>
+                            <button
+                              className="icon-button danger"
+                              onClick={() => void removeQueueEntry(entry.id)}
+                            >
+                              Remove
+                            </button>
                           </>
                         ) : null}
                       </div>

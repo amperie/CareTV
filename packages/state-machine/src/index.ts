@@ -207,6 +207,8 @@ const allowedTransitions: Record<PlaybackPhase, ReadonlySet<PlaybackStateEvent["
   "launching-browser": new Set(["BROWSER_LAUNCHED", "FAILED", "STOPPED", "HEARTBEAT"]),
   loading: new Set(["READY", "FAILED", "RECOVERING", "STOPPED", "HEARTBEAT"]),
   "awaiting-play": new Set([
+    "BUFFERING",
+    "PAUSED",
     "PLAYING",
     "COMPLETED",
     "FAILED",
