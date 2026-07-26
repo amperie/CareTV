@@ -91,38 +91,15 @@ export class FakePlaybackService {
       this.state = agent.getState();
 
       if (result.status === "idle") {
+        if (this.loopEnabled && this.options.queue.requeueCompletedEntries() > 0) {
+          continue;
+        }
+
         this.running = false;
         return;
       }
 
       this.lastResult = result;
-
-      if (result.status === "completed" && this.loopEnabled) {
-        this.requeue(result.queueEntryId);
-      }
     }
-  }
-
-  private requeue(queueEntryId: string): void {
-    const entry = this.options.queue.get(queueEntryId);
-
-    if (!entry) {
-      return;
-    }
-
-    const item = this.options.media.get(entry.mediaItemId);
-
-    if (!item?.repeatable) {
-      return;
-    }
-
-    this.options.queue.enqueue({
-      id: crypto.randomUUID(),
-      mediaItemId: item.id,
-      position: this.options.queue.nextPosition(),
-      priority: entry.priority,
-      status: "queued",
-      attemptCount: 0
-    });
   }
 }

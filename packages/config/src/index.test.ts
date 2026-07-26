@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,9 +18,11 @@ describe("config", () => {
       applianceHeartbeatMs: 5000,
       appliancePlaybackObserveMs: 1000,
       applianceRequestTimeoutMs: 10000,
+      applianceMediaScanMs: 30000,
       timezone: "America/Los_Angeles"
     });
     expect(config.values.runtimeDir).toBe(normalizePath(".caretv/runtime", "C:\\CareTV"));
+    expect(config.values.applianceMediaDir).toBe(normalizePath(".caretv/media", "C:\\CareTV"));
   });
 
   it("rejects invalid ports", () => {
@@ -36,13 +38,66 @@ describe("config", () => {
       const config = loadConfig(
         {
           CARETV_RUNTIME_DIR: "runtime",
-          CARETV_CHROME_PROFILE_DIR: "profile"
+          CARETV_CHROME_PROFILE_DIR: "profile",
+          CARETV_APPLIANCE_MEDIA_DIR: "media"
         },
         { cwd: root }
       );
 
       expect(config.values.runtimeDir).toBe(join(root, "runtime"));
       expect(config.values.chromeProfileDir).toBe(join(root, "profile"));
+      expect(config.values.applianceMediaDir).toBe(join(root, "media"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("loads config from caretv.config.json", () => {
+    const root = mkdtempSync(join(tmpdir(), "caretv-config-file-"));
+
+    try {
+      writeFileSync(
+        join(root, "caretv.config.json"),
+        JSON.stringify({
+          applianceId: "tv-room",
+          applianceName: "TV Room",
+          runtimeDir: "runtime",
+          serverUrl: "http://caretv.lan:4010"
+        })
+      );
+
+      const config = loadConfig({}, { createDirectories: false, cwd: root });
+
+      expect(config.values).toMatchObject({
+        applianceId: "tv-room",
+        applianceName: "TV Room",
+        serverUrl: "http://caretv.lan:4010"
+      });
+      expect(config.values.runtimeDir).toBe(join(root, "runtime"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets environment variables override config file values", () => {
+    const root = mkdtempSync(join(tmpdir(), "caretv-config-env-"));
+
+    try {
+      writeFileSync(
+        join(root, "caretv.config.json"),
+        JSON.stringify({
+          applianceName: "Config Name",
+          serverUrl: "http://config.lan:4010"
+        })
+      );
+
+      const config = loadConfig(
+        { CARETV_APPLIANCE_NAME: "Env Name" },
+        { createDirectories: false, cwd: root }
+      );
+
+      expect(config.values.applianceName).toBe("Env Name");
+      expect(config.values.serverUrl).toBe("http://config.lan:4010");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -63,6 +118,8 @@ describe("config", () => {
         applianceHeartbeatMs: 5000,
         appliancePlaybackObserveMs: 1000,
         applianceRequestTimeoutMs: 10000,
+        applianceMediaDir: "media",
+        applianceMediaScanMs: 30000,
         serverUrl: "http://127.0.0.1:4010",
         authToken: "0123456789abcdef"
       })

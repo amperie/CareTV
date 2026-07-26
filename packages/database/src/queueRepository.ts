@@ -138,6 +138,40 @@ export class QueueRepository {
     return Number(result.changes) > 0;
   }
 
+  public cancelQueuedForMedia(mediaItemIds: string[]): number {
+    if (mediaItemIds.length === 0) {
+      return 0;
+    }
+
+    const placeholders = mediaItemIds.map(() => "?").join(", ");
+    const result = this.db
+      .prepare(
+        `UPDATE queue_entries
+         SET status = 'cancelled'
+         WHERE status = 'queued' AND media_item_id IN (${placeholders})`
+      )
+      .run(...mediaItemIds);
+
+    return Number(result.changes);
+  }
+
+  public hasActiveForMedia(mediaItemIds: string[]): boolean {
+    if (mediaItemIds.length === 0) {
+      return false;
+    }
+
+    const placeholders = mediaItemIds.map(() => "?").join(", ");
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM queue_entries
+         WHERE status IN ('starting', 'playing', 'paused') AND media_item_id IN (${placeholders})`
+      )
+      .get(...mediaItemIds) as { count: number } | undefined;
+
+    return (row?.count ?? 0) > 0;
+  }
+
   public requeueCompleted(id: string): boolean {
     const result = this.db
       .prepare(
@@ -154,6 +188,24 @@ export class QueueRepository {
       .run(id);
 
     return Number(result.changes) > 0;
+  }
+
+  public requeueCompletedEntries(): number {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET status = 'queued',
+              started_at = NULL,
+              completed_at = NULL,
+              last_error_code = NULL,
+              last_error_message = NULL
+          WHERE status IN ('completed', 'failed', 'skipped')
+        `
+      )
+      .run();
+
+    return Number(result.changes);
   }
 
   public clearCompleted(): number {
@@ -207,6 +259,34 @@ export class QueueRepository {
     }
   }
 
+  public promoteToNext(id: string): boolean {
+    const current = this.get(id);
+
+    if (!current || isActiveStatus(current.status) || current.status === "cancelled") {
+      return false;
+    }
+
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(priority), 0) + 1 AS priority FROM queue_entries")
+      .get() as { priority: number } | undefined;
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET status = 'queued',
+              priority = ?,
+              started_at = NULL,
+              completed_at = NULL,
+              last_error_code = NULL,
+              last_error_message = NULL
+          WHERE id = ?
+        `
+      )
+      .run(row?.priority ?? 1, id);
+
+    return Number(result.changes) > 0;
+  }
+
   public reconcileStaleActive(status: QueueEntryStatus, errorCode: string): number {
     const result = this.db
       .prepare(
@@ -252,6 +332,10 @@ export class QueueRepository {
       .get() as { count: number } | undefined;
 
     return row?.count ?? 0;
+  }
+
+  public hasActive(): boolean {
+    return this.activeCount() > 0;
   }
 
   private activeCount(): number {

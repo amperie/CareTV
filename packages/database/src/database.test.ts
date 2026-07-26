@@ -10,6 +10,8 @@ import { ApplianceRepository } from "./applianceRepository.js";
 import { CommandRepository } from "./commandRepository.js";
 import { migrate, openDatabase } from "./database.js";
 import { MediaRepository } from "./mediaRepository.js";
+import { MediaDownloadRepository } from "./mediaDownloadRepository.js";
+import { MediaDeletionRepository } from "./mediaDeletionRepository.js";
 import { PlaybackEventRepository } from "./playbackEventRepository.js";
 import { QueueRepository } from "./queueRepository.js";
 import { SettingsRepository } from "./settingsRepository.js";
@@ -123,6 +125,32 @@ describe("database repositories", () => {
     });
   });
 
+  it("requeues all completed entries in their original order", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("completed", "media-1", 1),
+        status: "completed",
+        completedAt: now
+      });
+      queue.enqueue({
+        ...fakeQueueEntry("skipped", "media-1", 2),
+        status: "skipped",
+        completedAt: now
+      });
+
+      expect(queue.requeueCompletedEntries()).toBe(2);
+      expect(queue.list()).toMatchObject([
+        { id: "completed", status: "queued", position: 1 },
+        { id: "skipped", status: "queued", position: 2 }
+      ]);
+      expect(queue.runnableCount()).toBe(2);
+    });
+  });
+
   it("moves queued entries within the queued subset", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);
@@ -139,6 +167,23 @@ describe("database repositories", () => {
       expect(queue.list().map((entry) => entry.id)).toEqual(["active", "second", "first", "done"]);
       expect(queue.move("first", "up")).toBe(true);
       expect(queue.list().map((entry) => entry.id)).toEqual(["active", "first", "second", "done"]);
+    });
+  });
+
+  it("promotes queued and completed entries to play next", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue(fakeQueueEntry("first", "media-1", 1));
+      queue.enqueue(fakeQueueEntry("second", "media-1", 2));
+      queue.enqueue({ ...fakeQueueEntry("done", "media-1", 3), status: "completed" });
+
+      expect(queue.promoteToNext("second")).toBe(true);
+      expect(queue.selectNextQueued(now)?.id).toBe("second");
+      expect(queue.promoteToNext("done")).toBe(true);
+      expect(queue.get("done")).toMatchObject({ status: "queued" });
     });
   });
 
@@ -171,6 +216,72 @@ describe("database repositories", () => {
       expect(events.listRecent(5)[0]?.details).toEqual({ ok: true });
       expect(settings.get("timezone")).toEqual({ value: "UTC" });
       expect(media.get("media-1")).toBeUndefined();
+    });
+  });
+
+  it("can tombstone a deleted local media path", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const localPath = "C:\\CareTV\\media\\movie.mov";
+
+      media.upsert({
+        ...fakeMedia("local-1"),
+        service: "local",
+        mediaType: "local-file",
+        localPath
+      });
+
+      expect(media.deletedLocalPathExists(localPath)).toBe(false);
+      expect(media.softDeleteLocalPath(localPath, now)).toBe(1);
+      expect(media.deletedLocalPathExists(localPath)).toBe(true);
+    });
+  });
+
+  it("upserts local media and tracks appliance downloads", () => {
+    withMigratedDatabase((db) => {
+      const downloads = new MediaDownloadRepository(db);
+      const media = new MediaRepository(db);
+
+      media.upsert({
+        ...fakeMedia("local-1"),
+        service: "local",
+        mediaType: "local-file",
+        localPath: "C:\\CareTV\\media\\movie.mp4",
+        metadata: { sizeBytes: 100 }
+      });
+      downloads.create({
+        id: "download-1",
+        mediaItemId: "local-1",
+        filename: "movie.mp4",
+        sourcePath: "C:\\CareTV\\runtime\\uploads\\movie.mp4",
+        status: "pending",
+        createdAt: now
+      });
+
+      expect(media.get("local-1")).toMatchObject({
+        service: "local",
+        localPath: "C:\\CareTV\\media\\movie.mp4"
+      });
+      expect(downloads.listPending()).toMatchObject([{ id: "download-1" }]);
+      expect(downloads.complete("download-1", now)).toBe(true);
+      expect(downloads.listPending()).toEqual([]);
+    });
+  });
+
+  it("tracks appliance media deletions", () => {
+    withMigratedDatabase((db) => {
+      const deletions = new MediaDeletionRepository(db);
+
+      deletions.create({
+        id: "deletion-1",
+        localPath: "C:\\CareTV\\media\\movie.mov",
+        status: "pending",
+        createdAt: now
+      });
+
+      expect(deletions.listPending()).toMatchObject([{ id: "deletion-1" }]);
+      expect(deletions.complete("deletion-1", now)).toBe(true);
+      expect(deletions.listPending()).toEqual([]);
     });
   });
 

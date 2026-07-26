@@ -49,6 +49,20 @@ button.secondary:hover {
   background: #cbd6dd;
 }
 
+button.danger {
+  background: #f5d1d1;
+  color: #821b1b;
+}
+
+button.danger:hover {
+  background: #ecc0c0;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 button.toggle {
   background: #dde5ea;
   color: #24323d;
@@ -148,6 +162,40 @@ h2 {
 .controls {
   display: grid;
   gap: 12px;
+}
+
+.media-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.prime-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-button {
+  background: #dde5ea;
+  border-radius: 6px;
+  color: #24323d;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  min-height: 30px;
+  overflow: hidden;
+  padding: 6px 9px;
+  position: relative;
+}
+
+.upload-button.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.upload-button input {
+  inset: 0;
+  opacity: 0;
+  position: absolute;
 }
 
 label {
@@ -302,6 +350,10 @@ small {
   gap: 4px;
 }
 
+.media-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .icon-button {
   background: #eef2f5;
   color: #24323d;
@@ -312,6 +364,15 @@ small {
 
 .icon-button:hover {
   background: #dbe4ea;
+}
+
+.icon-button.play {
+  background: #246b54;
+  color: #fff;
+}
+
+.icon-button.play:hover {
+  background: #1c5543;
 }
 
 .icon-button:disabled {

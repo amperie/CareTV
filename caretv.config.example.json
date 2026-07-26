@@ -1,0 +1,17 @@
+{
+  "host": "0.0.0.0",
+  "serverPort": 4010,
+  "webPort": 4020,
+  "runtimeDir": "C:\\CareTV\\runtime",
+  "chromeProfileDir": "C:\\CareTV\\chrome-profile",
+  "timezone": "America/Los_Angeles",
+  "serverUrl": "http://w11.lan:4010",
+  "applianceId": "local-appliance",
+  "applianceName": "Local Appliance",
+  "appliancePollMs": 1000,
+  "applianceHeartbeatMs": 5000,
+  "appliancePlaybackObserveMs": 1000,
+  "applianceRequestTimeoutMs": 10000,
+  "applianceMediaDir": "C:\\CareTV\\media",
+  "applianceMediaScanMs": 30000
+}

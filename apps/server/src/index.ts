@@ -1,4 +1,7 @@
-import { join } from "node:path";
+import { createReadStream } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 
 import Fastify from "fastify";
 
@@ -16,6 +19,8 @@ import { createHealthStatus } from "@caretv/core";
 import {
   ApplianceRepository,
   CommandRepository,
+  MediaDeletionRepository,
+  MediaDownloadRepository,
   MediaRepository,
   migrate,
   openDatabase,
@@ -30,12 +35,25 @@ migrate(db);
 
 const appliances = new ApplianceRepository(db);
 const media = new MediaRepository(db);
+const deletions = new MediaDeletionRepository(db);
+const downloads = new MediaDownloadRepository(db);
 const queue = new QueueRepository(db);
 const commands = new CommandRepository(db);
 const events = new PlaybackEventRepository(db);
 const settings = new SettingsRepository(db);
 
-const app = Fastify({ logger: true });
+const app = Fastify({ bodyLimit: 1024 * 1024 * 1024, logger: true });
+const uploadDir = join(config.values.runtimeDir, "uploads");
+
+await mkdir(uploadDir, { recursive: true });
+
+app.addContentTypeParser(
+  "application/octet-stream",
+  { parseAs: "buffer" },
+  (_request, body, done) => {
+    done(null, body);
+  }
+);
 
 app.addHook("onRequest", (request, reply, done) => {
   reply.header("Access-Control-Allow-Origin", "*");
@@ -52,6 +70,7 @@ app.addHook("onRequest", (request, reply, done) => {
 
 app.get("/health", () => createHealthStatus("server"));
 app.get("/api/v1/media", () => media.list());
+app.get("/api/v1/downloads", () => downloads.listPending());
 app.get("/api/v1/queue", () => queue.list());
 app.get("/api/v1/appliances", () => appliances.list(new Date()));
 app.get("/api/v1/playback/status", () => {
@@ -85,6 +104,82 @@ app.post("/api/v1/media", (request, reply) => {
   media.create(item);
   reply.code(201);
   return item;
+});
+
+app.delete("/api/v1/media/:id", (request, reply) => {
+  const item = media.get(routeParam(request.params, "id"));
+
+  if (!item) {
+    reply.code(404);
+    return { error: "media-not-found" };
+  }
+
+  const relatedItems = item.localPath
+    ? media.list().filter((candidate) => candidate.localPath === item.localPath)
+    : [item];
+  const ids = relatedItems.map((candidate) => candidate.id);
+
+  if (queue.hasActiveForMedia(ids)) {
+    reply.code(409);
+    return { error: "media-is-active" };
+  }
+
+  const now = new Date().toISOString();
+  queue.cancelQueuedForMedia(ids);
+
+  if (item.localPath) {
+    deletions.create({
+      id: crypto.randomUUID(),
+      localPath: item.localPath,
+      status: "pending",
+      createdAt: now
+    });
+    media.softDeleteLocalPath(item.localPath, now);
+  } else {
+    media.softDelete(item.id, now);
+  }
+
+  return { deleted: true };
+});
+
+app.post("/api/v1/uploads", async (request, reply) => {
+  const body = Buffer.isBuffer(request.body) ? request.body : undefined;
+  const filename = safeFilename(stringField(parseBody(request.query), "filename", "upload.bin"));
+
+  if (!body?.length) {
+    reply.code(400);
+    return { error: "upload-body-required" };
+  }
+
+  const now = new Date().toISOString();
+  const downloadId = crypto.randomUUID();
+  const mediaItemId = crypto.randomUUID();
+  const sourcePath = join(uploadDir, `${downloadId}-${filename}`);
+
+  await writeFile(sourcePath, body);
+
+  media.create({
+    id: mediaItemId,
+    title: titleFromFilename(filename),
+    service: "local",
+    mediaType: "local-file",
+    enabled: true,
+    repeatable: true,
+    metadata: { upload: { downloadId, filename, status: "pending" } },
+    createdAt: now,
+    updatedAt: now
+  });
+  downloads.create({
+    id: downloadId,
+    mediaItemId,
+    filename,
+    sourcePath,
+    status: "pending",
+    createdAt: now
+  });
+
+  reply.code(201);
+  return { downloadId, mediaItemId };
 });
 
 app.post("/api/v1/queue", (request, reply) => {
@@ -124,6 +219,19 @@ app.delete("/api/v1/queue/:id", (request, reply) => {
   }
 
   return { removed: true };
+});
+
+app.post("/api/v1/queue/:id/play", (request, reply) => {
+  if (!queue.promoteToNext(routeParam(request.params, "id"))) {
+    reply.code(409);
+    return { error: "queue-entry-not-playable" };
+  }
+
+  if (queue.hasActive()) {
+    commands.create(createCommand("skip"));
+  }
+
+  return setPlaybackSettings({ enabled: true });
 });
 
 app.post("/api/v1/queue/:id/move", (request, reply) => {
@@ -175,7 +283,52 @@ app.post("/api/v1/fake-queue", (request, reply) => {
   return { item, entry };
 });
 
-app.post("/api/v1/playback/start", () => setPlaybackSettings({ enabled: true }));
+app.post("/api/v1/prime-queue", async (request, reply) => {
+  const body = parseBody(request.body);
+  const url = stringField(body, "url", "");
+
+  if (!isPrimeUrl(url)) {
+    reply.code(400);
+    return { error: "prime-url-required" };
+  }
+
+  const now = new Date().toISOString();
+  const title = await titleForPrimeUrl(url, stringOptional(body.title));
+  const item: MediaItem = {
+    id: crypto.randomUUID(),
+    title,
+    service: "prime",
+    mediaType: "movie",
+    url,
+    enabled: true,
+    repeatable: true,
+    expectedDurationSeconds: numberField(body, "durationSeconds", 7200),
+    metadata: { sourceUrl: url },
+    createdAt: now,
+    updatedAt: now
+  };
+  const entry: QueueEntry = {
+    id: crypto.randomUUID(),
+    mediaItemId: item.id,
+    position: queue.nextPosition(),
+    priority: 0,
+    status: "queued",
+    attemptCount: 0
+  };
+
+  media.create(item);
+  queue.enqueue(entry);
+  reply.code(201);
+  return { item, entry };
+});
+
+app.post("/api/v1/playback/start", () => {
+  if (queue.runnableCount() === 0) {
+    queue.requeueCompletedEntries();
+  }
+
+  return setPlaybackSettings({ enabled: true });
+});
 app.post("/api/v1/playback/stop", () => {
   const status = setPlaybackSettings({ enabled: false });
   commands.create(createCommand("stop"));
@@ -192,6 +345,8 @@ app.post("/api/v1/lab/reset", () => {
     DELETE FROM playback_commands;
     DELETE FROM playback_sessions;
     DELETE FROM queue_entries;
+    DELETE FROM media_deletions;
+    DELETE FROM media_downloads;
     DELETE FROM media_items;
   `);
   return { reset: true, ...status };
@@ -215,13 +370,146 @@ app.post("/api/v1/commands", (request, reply) => {
 
 app.post("/api/v1/appliance/heartbeat", (request) => {
   const body = parseBody(request.body);
+  const state = playbackStateField(body.state);
   appliances.heartbeat(
     stringField(body, "applianceId", config.values.applianceId),
     stringField(body, "name", config.values.applianceName),
     new Date().toISOString(),
-    playbackStateField(body.state)
+    state
   );
+
+  if (state?.phase === "idle") {
+    queue.reconcileStaleActive("failed", "appliance-idle");
+  }
+
   return { ok: true, playback: playbackSettings() };
+});
+
+app.post("/api/v1/appliance/media-inventory", (request) => {
+  const body = parseBody(request.body);
+  const applianceId = stringField(body, "applianceId", config.values.applianceId);
+  const now = new Date().toISOString();
+  let synced = 0;
+
+  for (const item of arrayField(body.items)) {
+    const record = parseBody(item);
+    const localPath = stringOptional(record.localPath);
+
+    if (!localPath || !isSupportedMediaPath(localPath)) {
+      continue;
+    }
+
+    if (media.deletedLocalPathExists(localPath)) {
+      continue;
+    }
+
+    media.upsert({
+      id: media.getByLocalPath(localPath)?.id ?? localMediaId(applianceId, localPath),
+      title: stringField(record, "title", titleFromFilename(localPath)),
+      service: "local",
+      mediaType: "local-file",
+      localPath,
+      enabled: true,
+      repeatable: true,
+      metadata: {
+        applianceId,
+        sizeBytes: numberField(record, "sizeBytes", 0),
+        modifiedAt: stringField(record, "modifiedAt", now)
+      },
+      createdAt: now,
+      updatedAt: now
+    });
+    synced += 1;
+  }
+
+  return { synced };
+});
+
+app.get("/api/v1/appliance/downloads", () =>
+  downloads.listPending().map((download) => ({
+    id: download.id,
+    mediaItemId: download.mediaItemId,
+    filename: download.filename,
+    url: `/api/v1/appliance/downloads/${download.id}/file`
+  }))
+);
+
+app.get("/api/v1/appliance/media-deletions", () =>
+  deletions.listPending().map((deletion) => ({
+    id: deletion.id,
+    localPath: deletion.localPath
+  }))
+);
+
+app.post("/api/v1/appliance/media-deletions/:id/complete", (request, reply) => {
+  if (!deletions.complete(routeParam(request.params, "id"), new Date().toISOString())) {
+    reply.code(404);
+    return { error: "deletion-not-found" };
+  }
+
+  return { ok: true };
+});
+
+app.post("/api/v1/appliance/media-deletions/:id/fail", (request, reply) => {
+  const body = parseBody(request.body);
+
+  if (
+    !deletions.fail(
+      routeParam(request.params, "id"),
+      stringField(body, "message", "Deletion failed."),
+      new Date().toISOString()
+    )
+  ) {
+    reply.code(404);
+    return { error: "deletion-not-found" };
+  }
+
+  return { ok: true };
+});
+
+app.get("/api/v1/appliance/downloads/:id/file", (request, reply) => {
+  const download = downloads.get(routeParam(request.params, "id"));
+
+  if (!download || download.status !== "pending") {
+    reply.code(404);
+    return { error: "download-not-found" };
+  }
+
+  reply.header("content-type", "application/octet-stream");
+  return reply.send(createReadStream(download.sourcePath));
+});
+
+app.post("/api/v1/appliance/downloads/:id/complete", (request, reply) => {
+  const body = parseBody(request.body);
+  const download = downloads.get(routeParam(request.params, "id"));
+  const localPath = stringOptional(body.localPath);
+  const now = new Date().toISOString();
+
+  if (!download || !localPath) {
+    reply.code(404);
+    return { error: "download-not-found" };
+  }
+
+  downloads.complete(download.id, now);
+  media.updateLocalPath(download.mediaItemId, localPath, now);
+  return { ok: true };
+});
+
+app.post("/api/v1/appliance/downloads/:id/fail", (request, reply) => {
+  const body = parseBody(request.body);
+  const download = downloads.get(routeParam(request.params, "id"));
+
+  if (!download) {
+    reply.code(404);
+    return { error: "download-not-found" };
+  }
+
+  downloads.fail(
+    download.id,
+    stringField(body, "message", "Download failed."),
+    new Date().toISOString()
+  );
+  return { ok: true };
 });
 
 app.get("/api/v1/appliance/playback", () => playbackSettings());
@@ -237,7 +525,20 @@ app.get("/api/v1/appliance/media/:id", (request, reply) => {
   return item;
 });
 
-app.post("/api/v1/appliance/queue/next", () => queue.selectNextQueued(new Date().toISOString()));
+app.post("/api/v1/appliance/queue/next", () => {
+  const now = new Date().toISOString();
+  const next = queue.selectNextQueued(now);
+
+  if (next || !playbackSettings().loopEnabled || queue.runnableCount() > 0) {
+    return next ?? null;
+  }
+
+  if (queue.requeueCompletedEntries() === 0) {
+    return null;
+  }
+
+  return queue.selectNextQueued(now) ?? null;
+});
 app.post("/api/v1/appliance/queue", (request, reply) => {
   const body = parseBody(request.body);
   const mediaItemId = stringField(body, "mediaItemId", "");
@@ -305,11 +606,17 @@ app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
 });
 
 app.post("/api/v1/appliance/playback/complete-run", () => {
+  const playback = playbackSettings();
+
   if (queue.runnableCount() === 0) {
+    if (playback.loopEnabled && queue.requeueCompletedEntries() > 0) {
+      return playback;
+    }
+
     return setPlaybackSettings({ enabled: false });
   }
 
-  return playbackSettings();
+  return playback;
 });
 
 app.get("/api/v1/appliance/commands", () => commands.listByStatus("pending"));
@@ -399,6 +706,10 @@ function objectField(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function arrayField(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function optionalStrings(body: Record<string, unknown>): {
   completedAt?: string;
   lastErrorCode?: string;
@@ -446,4 +757,110 @@ function stringOptional(value: unknown): string | undefined {
 function stringField(body: Record<string, unknown>, key: string, fallback: string): string {
   const value = body[key];
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function safeFilename(input: string): string {
+  return (
+    basename(input)
+      .replace(/[^a-zA-Z0-9._ -]/g, "_")
+      .trim() || "upload.bin"
+  );
+}
+
+function titleFromFilename(input: string): string {
+  return basename(input, extname(input)).replace(/[_-]+/g, " ").trim() || "Untitled media";
+}
+
+function localMediaId(applianceId: string, localPath: string): string {
+  return `local-${createHash("sha256").update(`${applianceId}:${localPath}`).digest("hex").slice(0, 24)}`;
+}
+
+function isSupportedMediaPath(localPath: string): boolean {
+  return [".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi"].includes(
+    extname(localPath).toLowerCase()
+  );
+}
+
+function isPrimeUrl(input: string): boolean {
+  try {
+    const host = new URL(input).hostname;
+    return host.includes("amazon.") || host.endsWith("primevideo.com");
+  } catch {
+    return false;
+  }
+}
+
+async function titleForPrimeUrl(url: string, fallback?: string): Promise<string> {
+  const remoteTitle = await fetchPrimeTitle(url);
+  return remoteTitle ?? fallback ?? titleFromPrimeUrl(url);
+}
+
+async function fetchPrimeTitle(url: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "accept": "text/html",
+        "user-agent": "Mozilla/5.0 CareTV title resolver"
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const html = await response.text();
+    return cleanPrimeTitle(
+      matchMeta(html, "og:title") ?? matchMeta(html, "twitter:title") ?? matchTitle(html)
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function matchMeta(html: string, property: string): string | undefined {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
+    "i"
+  ).exec(html);
+  return match?.[1];
+}
+
+function matchTitle(html: string): string | undefined {
+  return /<title[^>]*>([^<]+)<\/title>/i.exec(html)?.[1];
+}
+
+function cleanPrimeTitle(input: string | undefined): string | undefined {
+  if (!input) {
+    return undefined;
+  }
+
+  const decoded = decodeHtml(input)
+    .replace(/\s*-\s*(Prime Video|Amazon\.com).*$/i, "")
+    .replace(/\s*\|\s*(Prime Video|Amazon\.com).*$/i, "")
+    .trim();
+  return decoded || undefined;
+}
+
+function decodeHtml(input: string): string {
+  return input
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function titleFromPrimeUrl(input: string): string {
+  try {
+    const url = new URL(input);
+    const pathTitle = url.pathname
+      .split("/")
+      .filter(Boolean)
+      .find((part) => !["gp", "video", "detail", "dp"].includes(part.toLowerCase()));
+    return pathTitle ? titleFromFilename(pathTitle.replace(/[-_]+/g, " ")) : "Prime Video";
+  } catch {
+    return "Prime Video";
+  }
 }

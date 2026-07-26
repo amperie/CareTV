@@ -87,5 +87,33 @@ export const migrations = [
         playback_state_json TEXT
       );
     `
+  },
+  {
+    id: 3,
+    sql: `
+      CREATE TABLE IF NOT EXISTS media_downloads (
+        id TEXT PRIMARY KEY,
+        media_item_id TEXT NOT NULL REFERENCES media_items(id),
+        filename TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        error_message TEXT
+      );
+    `
+  },
+  {
+    id: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS media_deletions (
+        id TEXT PRIMARY KEY,
+        local_path TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        error_message TEXT
+      );
+    `
   }
 ] as const;

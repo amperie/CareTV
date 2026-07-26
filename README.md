@@ -14,13 +14,14 @@ This repository currently contains the Phase 0/1 local prototype:
 - appliance agent
 - shared package structure
 - SQLite repositories for media, queue, commands, events, settings, and appliance heartbeat
-- fake playback adapter and state machine
+- appliance local-media inventory sync and upload download jobs
+- fake playback adapter, local-file adapter, Prime Video adapter, and state machine
 - strict TypeScript, ESLint, Prettier, and Vitest configuration
 - Windows-focused startup script
 
-Real streaming-service automation is not implemented yet. The current playback path is deterministic
-fake playback used to prove queue orchestration, remote appliance polling, state reporting, and
-dashboard controls.
+Prime Video automation is implemented as an early browser adapter. It requires a manually signed-in
+persistent Chrome profile on the appliance and must be validated on physical Windows hardware with a
+real HDMI display because DRM playback can fail in virtualized or remote-display environments.
 
 ## Architecture
 
@@ -42,7 +43,7 @@ flowchart LR
 
   subgraph Appliance["TV Appliance / Mini-PC"]
     ApplianceAgent["apps/appliance-agent\npolling runtime"]
-    Adapter["Fake adapter today\nlocal/streaming adapters later"]
+    Adapter["Fake + local-file adapters today\nstreaming adapters later"]
     Display["TV output"]
   end
 
@@ -51,7 +52,7 @@ flowchart LR
     Config["@caretv/config\nenv/runtime paths"]
     Database["@caretv/database\nrepositories + migrations"]
     State["@caretv/state-machine\nplayback transitions"]
-    Adapters["@caretv/adapters\nadapter contract + fake adapter"]
+    Adapters["@caretv/adapters\nadapter contract + fake/local adapters"]
     Playback["@caretv/playback-agent\nin-process fake runner"]
   end
 
@@ -83,9 +84,8 @@ flowchart LR
    SQLite through `@caretv/database`.
 3. `apps/appliance-agent` polls the server for playback settings. When playback is enabled, it claims
    the next queued entry and fetches the media item.
-4. The appliance selects an adapter. Today that is the deterministic fake adapter in
-   `@caretv/adapters`; later this boundary is where local media, YouTube, Prime, or other browser
-   adapters plug in.
+4. The appliance selects an adapter. Today that is deterministic fake playback, local-file playback,
+   or Prime Video playback in `@caretv/adapters`.
 5. The appliance uses `@caretv/state-machine` to turn observations and commands into explicit
    playback states, then reports heartbeats/events/status updates back to the server.
 6. The dashboard reads `/api/v1/playback/status` to show queue state, appliance state, and recent
@@ -100,9 +100,9 @@ flowchart LR
 - `apps/agent`: older local placeholder entry point retained while the appliance runtime evolves.
 - `apps/watchdog`: placeholder for process health checks and restart behavior.
 - `@caretv/core`: shared domain types and health helpers.
-- `@caretv/config`: environment loading, validation, path normalization, and redacted config output.
+- `@caretv/config`: config file and environment loading, validation, path normalization, and redacted config output.
 - `@caretv/database`: SQLite migrations and repositories.
-- `@caretv/adapters`: playback adapter contract plus deterministic fake adapter.
+- `@caretv/adapters`: playback adapter contract plus deterministic fake, local-file, and Prime adapters.
 - `@caretv/state-machine`: allowed playback transitions and event generation.
 - `@caretv/playback-agent`: in-process fake playback runner used by the server-side prototype path.
 
@@ -111,7 +111,7 @@ flowchart LR
 - Windows 11 for the target development VM
 - Node.js LTS
 - Corepack enabled for pnpm
-- Google Chrome installed later, before browser playback work starts
+- Google Chrome installed for local-file browser playback
 
 ## Setup
 
@@ -138,6 +138,112 @@ Or run directly:
 pnpm dev
 ```
 
+Start only the server-side components on the control-plane machine:
+
+```powershell
+.\scripts\start-server.ps1
+```
+
+This runs:
+
+- `apps/server` on port `4010`
+- `apps/web` on port `4020`
+
+Open the dashboard at `http://w11.lan:4020` from another device on the LAN.
+
+Start only the appliance-side runtime on the TV-connected machine:
+
+```powershell
+.\scripts\start-appliance.ps1
+```
+
+The appliance finds the server through `serverUrl` in `caretv.config.json`. In
+`caretv.config.example.json` it is set to:
+
+```text
+serverUrl: "http://w11.lan:4010"
+```
+
+## Server And Appliance Deployment
+
+### Server side
+
+Run this on the control-plane machine, VM, or internet host:
+
+```powershell
+.\scripts\start-server.ps1
+```
+
+Server-side components:
+
+- `apps/server`: API and SQLite owner, default port `4010`
+- `apps/web`: dashboard, default port `4020`
+- Runtime database and upload staging under `CARETV_RUNTIME_DIR`
+
+If the server is reachable on the LAN as `w11.lan`, use:
+
+```text
+{
+  "host": "0.0.0.0",
+  "serverUrl": "http://w11.lan:4010"
+}
+```
+
+If the server is on the internet, put it behind a real HTTPS hostname and set the appliance to that
+public URL instead:
+
+```text
+{
+  "serverUrl": "https://caretv.example.com"
+}
+```
+
+Do not expose the raw development server directly to the internet long-term. The current prototype
+has permissive CORS and no production authentication layer.
+
+### Appliance side
+
+Run this on the TV-connected Windows appliance:
+
+```powershell
+.\scripts\start-appliance.ps1
+```
+
+Appliance-side responsibilities:
+
+- Poll the server for playback settings and queued work
+- Poll the server for commands such as pause, resume, skip, and stop
+- Send heartbeat, playback state, events, and queue status updates
+- Scan `CARETV_APPLIANCE_MEDIA_DIR` and sync discovered local media inventory
+- Pull uploaded media from the server and save it locally
+- Pull media deletion jobs from the server and delete local files
+- Launch Chrome locally for playback
+
+### Network direction and NAT
+
+The appliance is designed to work behind NAT. The server never needs to open a connection into the
+appliance.
+
+All appliance communication is appliance-initiated outbound HTTP(S):
+
+- appliance `POST /api/v1/appliance/heartbeat`
+- appliance `POST /api/v1/appliance/queue/next`
+- appliance `GET /api/v1/appliance/commands`
+- appliance `GET /api/v1/appliance/downloads`
+- appliance `GET /api/v1/appliance/downloads/:id/file`
+- appliance `POST /api/v1/appliance/media-inventory`
+- appliance `GET /api/v1/appliance/media-deletions`
+- appliance status updates back to the server
+
+The operator dashboard talks to the server directly from the operator's browser. The dashboard does
+not talk to the appliance.
+
+Minimum network requirements:
+
+- Appliance: outbound access to `CARETV_SERVER_URL`
+- Server: inbound access from appliances and operator browsers
+- Appliance: no inbound port forwarding required
+
 Default local endpoints:
 
 - server health: `http://127.0.0.1:4010/health`
@@ -150,7 +256,8 @@ and reports heartbeat/state/events back to the server.
 ## Fake Playback Lab
 
 The dashboard can add fake media items, enqueue them, start/stop playback, toggle loop, edit queued
-items, and show appliance state/event output.
+items, show discovered local media, upload media for the appliance to download, and show appliance
+state/event output.
 
 1. Start the local server, dashboard, and appliance:
 
@@ -163,23 +270,65 @@ items, and show appliance state/event output.
 4. Click `Start`.
 5. Watch the output panel, queue statuses, and event log update as items play through.
 
-The playback is deterministic fake playback only. It does not open Chrome or use any streaming
-service yet.
+Fake playback is deterministic. Local-file playback launches Google Chrome with the configured
+persistent profile, opens a generated HTML5 player page, loads the appliance-local file, and controls
+playback through Chrome DevTools Protocol.
+
+## Prime Video
+
+Prime items are queued from the dashboard with a title and an Amazon Prime Video URL. The adapter
+opens the URL in visible Chrome through the appliance's persistent `CARETV_CHROME_PROFILE_DIR`, tries
+to start or resume playback, enters fullscreen, observes the page video element, and reports common
+blockers such as sign-in, profile selection, purchase/rental requirements, unavailable titles, and
+playback errors.
+
+Before testing Prime, start Chrome through the appliance profile and sign into Amazon manually once.
+Do not store Amazon credentials in CareTV. Use included-with-Prime titles for validation.
+
+## Local Media Inventory And Uploads
+
+The appliance agent scans `CARETV_APPLIANCE_MEDIA_DIR` for `.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`,
+and `.avi` files every `CARETV_APPLIANCE_MEDIA_SCAN_MS`, then syncs those files to the server media
+catalog. The dashboard shows those discovered local files under `Discovered media`.
+
+The dashboard upload button sends a media file to the server runtime upload directory. The appliance
+polls for pending downloads, saves them into `CARETV_APPLIANCE_MEDIA_DIR`, and reports completion so
+the item can be queued from the dashboard.
+
+Queued local media is played by the appliance through the local-file adapter. The adapter reuses the
+configured Chrome profile, observes browser video state, and issues player-level play, pause, resume,
+stop, and fullscreen commands.
 
 ## Appliance Configuration
 
-The appliance agent reads these environment variables:
+Runtime config is read from `caretv.config.json` in the working directory by default. Start from
+`caretv.config.example.json` and set appliance-specific values there:
 
-- `CARETV_SERVER_URL`: server base URL, default `http://127.0.0.1:4010`
-- `CARETV_APPLIANCE_ID`: stable appliance id, default `local-appliance`
-- `CARETV_APPLIANCE_NAME`: dashboard display name, default `Local Appliance`
-- `CARETV_APPLIANCE_POLL_MS`: control/queue polling interval, default `1000`
-- `CARETV_APPLIANCE_HEARTBEAT_MS`: idle heartbeat interval, default `5000`
-- `CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS`: playback observation/progress interval, default `1000`
+```json
+{
+  "serverUrl": "http://w11.lan:4010",
+  "applianceId": "living-room-tv",
+  "applianceName": "Living Room TV",
+  "chromeProfileDir": "C:\\CareTV\\chrome-profile",
+  "applianceMediaDir": "C:\\CareTV\\media"
+}
+```
 
-For local development, `pnpm dev` starts the appliance against the local server. For a separate TV
-appliance, run `pnpm --filter @caretv/appliance-agent dev` with `CARETV_SERVER_URL` pointing at the
-hosted server.
+The supported file keys match the internal camel-case config names:
+
+- `serverUrl`: server base URL, default `http://127.0.0.1:4010`
+- `applianceId`: stable appliance id, default `local-appliance`
+- `applianceName`: dashboard display name, default `Local Appliance`
+- `appliancePollMs`: control/queue polling interval, default `1000`
+- `applianceHeartbeatMs`: idle heartbeat interval, default `5000`
+- `appliancePlaybackObserveMs`: playback observation/progress interval, default `1000`
+- `applianceMediaDir`: local media folder scanned by the appliance, default `.caretv/media`
+- `applianceMediaScanMs`: local media scan interval, default `30000`
+- `runtimeDir`: runtime database/upload/log location, default `.caretv/runtime`
+- `chromeProfileDir`: persistent browser profile location, default `.caretv/chrome-profile`
+
+Set `CARETV_CONFIG_FILE` only when the config file lives somewhere else. Environment variables still
+override file values for deployment overrides.
 
 ## Runtime Data
 
@@ -189,5 +338,5 @@ as `C:\CareTV\runtime`.
 
 ## Next Task
 
-Add a dedicated output-only route/window and then start the first real playback adapter, ideally
-local file or YouTube before attempting DRM-heavy services.
+Harden the local-file adapter on physical TV hardware, then add a streaming adapter such as YouTube
+before attempting DRM-heavy services.

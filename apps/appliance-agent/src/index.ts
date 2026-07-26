@@ -1,4 +1,7 @@
-import { FakeStreamingAdapter } from "@caretv/adapters";
+import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+
+import { FakeStreamingAdapter, LocalFileAdapter, PrimeVideoAdapter } from "@caretv/adapters";
 import type { AdapterContext, PlaybackObservation, StreamingAdapter } from "@caretv/adapters";
 import { loadConfig } from "@caretv/config";
 import type { MediaItem, PlaybackCommand, PlaybackState, QueueEntry } from "@caretv/core";
@@ -6,9 +9,14 @@ import { createIdleState, transition } from "@caretv/state-machine";
 import type { PlaybackStateEvent } from "@caretv/state-machine";
 
 const config = loadConfig();
-const adapter = new FakeStreamingAdapter();
+const adapters: StreamingAdapter[] = [
+  new PrimeVideoAdapter({ userDataDir: config.values.chromeProfileDir }),
+  new LocalFileAdapter({ userDataDir: config.values.chromeProfileDir }),
+  new FakeStreamingAdapter()
+];
 let state: PlaybackState = createIdleState();
 let nextHeartbeatAt = 0;
+let nextMediaScanAt = 0;
 let backgroundHeartbeatInFlight = false;
 
 async function main(): Promise<void> {
@@ -28,6 +36,7 @@ async function main(): Promise<void> {
 
   for (;;) {
     try {
+      await mediaMaintenance();
       const playback = await pollPlaybackSettings();
 
       if (!playback) {
@@ -48,7 +57,7 @@ async function main(): Promise<void> {
         continue;
       }
 
-      await play(queueEntry, playback.loopEnabled);
+      await play(queueEntry);
     } catch (error) {
       console.warn(
         JSON.stringify({
@@ -67,6 +76,69 @@ function startBackgroundHeartbeat(): void {
     void backgroundHeartbeat();
   }, config.values.applianceHeartbeatMs).unref();
   void backgroundHeartbeat();
+}
+
+async function mediaMaintenance(): Promise<void> {
+  await processDeletions();
+  await processDownloads();
+
+  if (Date.now() < nextMediaScanAt) {
+    return;
+  }
+
+  await syncMediaInventory();
+  nextMediaScanAt = Date.now() + config.values.applianceMediaScanMs;
+}
+
+async function processDeletions(): Promise<void> {
+  for (const deletion of await client.pendingDeletions()) {
+    try {
+      if (!isInsideMediaDir(deletion.localPath)) {
+        throw new Error("Refusing to delete a path outside the appliance media directory.");
+      }
+
+      try {
+        await unlink(deletion.localPath);
+      } catch (error) {
+        if (!isMissingFileError(error)) {
+          throw error;
+        }
+      }
+
+      await client.completeDeletion(deletion.id);
+      nextMediaScanAt = 0;
+    } catch (error) {
+      await client.failDeletion(
+        deletion.id,
+        error instanceof Error ? error.message : "Deletion failed."
+      );
+    }
+  }
+}
+
+async function syncMediaInventory(): Promise<void> {
+  const files = await scanMediaFiles(config.values.applianceMediaDir);
+  await client.syncMediaInventory(config.values.applianceId, files);
+}
+
+async function processDownloads(): Promise<void> {
+  await mkdir(config.values.applianceMediaDir, { recursive: true });
+
+  for (const download of await client.pendingDownloads()) {
+    const localPath = join(config.values.applianceMediaDir, safeFilename(download.filename));
+
+    try {
+      const bytes = await client.downloadFile(download.url);
+      await writeFile(localPath, bytes);
+      await client.completeDownload(download.id, localPath);
+      nextMediaScanAt = 0;
+    } catch (error) {
+      await client.failDownload(
+        download.id,
+        error instanceof Error ? error.message : "Download failed."
+      );
+    }
+  }
 }
 
 async function backgroundHeartbeat(): Promise<void> {
@@ -108,10 +180,12 @@ async function pollPlaybackSettings(): Promise<
   }
 }
 
-async function play(queueEntry: QueueEntry, loopEnabled: boolean): Promise<void> {
+async function play(queueEntry: QueueEntry): Promise<void> {
   const mediaItem = await client.getMedia(queueEntry.mediaItemId);
 
-  if (!adapter.supports(mediaItem)) {
+  const adapter = adapters.find((candidate) => candidate.supports(mediaItem));
+
+  if (!adapter) {
     await fail(queueEntry.id, "adapter-not-found", `No adapter supports ${mediaItem.service}.`);
     return;
   }
@@ -137,11 +211,7 @@ async function play(queueEntry: QueueEntry, loopEnabled: boolean): Promise<void>
     await adapter.enterFullscreen(context);
     await apply({ type: "READY" });
 
-    const result = await monitor(queueEntry, mediaItem, adapter, context);
-
-    if (result === "completed" && loopEnabled && mediaItem.repeatable) {
-      await client.requeue(queueEntry.id);
-    }
+    await monitor(queueEntry, mediaItem, adapter, context);
   } catch (error) {
     await fail(
       queueEntry.id,
@@ -366,16 +436,50 @@ class ServerClient {
     return this.get<{ enabled: boolean; loopEnabled: boolean }>("/api/v1/appliance/playback");
   }
 
+  public syncMediaInventory(applianceId: string, items: LocalMediaInventoryItem[]) {
+    return this.post("/api/v1/appliance/media-inventory", { applianceId, items });
+  }
+
+  public pendingDownloads() {
+    return this.get<PendingDownload[]>("/api/v1/appliance/downloads");
+  }
+
+  public pendingDeletions() {
+    return this.get<PendingDeletion[]>("/api/v1/appliance/media-deletions");
+  }
+
+  public completeDeletion(id: string) {
+    return this.post(`/api/v1/appliance/media-deletions/${id}/complete`, {});
+  }
+
+  public failDeletion(id: string, message: string) {
+    return this.post(`/api/v1/appliance/media-deletions/${id}/fail`, { message });
+  }
+
+  public completeDownload(id: string, localPath: string) {
+    return this.post(`/api/v1/appliance/downloads/${id}/complete`, { localPath });
+  }
+
+  public failDownload(id: string, message: string) {
+    return this.post(`/api/v1/appliance/downloads/${id}/fail`, { message });
+  }
+
+  public async downloadFile(path: string): Promise<Buffer> {
+    const response = await this.fetch("GET", path);
+
+    if (!response.ok) {
+      throw new Error(`GET ${path} failed with ${response.status}`);
+    }
+
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   public claimNextQueueEntry() {
-    return this.post<QueueEntry | undefined>("/api/v1/appliance/queue/next", {});
+    return this.post<QueueEntry | null>("/api/v1/appliance/queue/next", {});
   }
 
   public getMedia(id: string) {
     return this.get<MediaItem>(`/api/v1/appliance/media/${id}`);
-  }
-
-  public requeue(id: string) {
-    return this.post(`/api/v1/appliance/queue/${id}/requeue`, {});
   }
 
   public completePlaybackRun() {
@@ -425,6 +529,20 @@ class ServerClient {
     path: string,
     body?: Record<string, unknown>
   ): Promise<T> {
+    const response = await this.fetch(method, path, body);
+
+    if (!response.ok) {
+      throw new Error(`${method} ${path} failed with ${response.status}`);
+    }
+
+    return (await response.json()) as T;
+  }
+
+  private async fetch(
+    method: "GET" | "POST",
+    path: string,
+    body?: Record<string, unknown>
+  ): Promise<Response> {
     let response: Response;
     const controller = new AbortController();
     const timeout = setTimeout(() => {
@@ -447,14 +565,88 @@ class ServerClient {
       clearTimeout(timeout);
     }
 
-    if (!response.ok) {
-      throw new Error(`${method} ${path} failed with ${response.status}`);
-    }
-
-    return (await response.json()) as T;
+    return response;
   }
 }
 
 const client = new ServerClient(config.values.serverUrl, config.values.applianceRequestTimeoutMs);
 
 void main();
+
+interface LocalMediaInventoryItem {
+  localPath: string;
+  title: string;
+  sizeBytes: number;
+  modifiedAt: string;
+}
+
+interface PendingDownload {
+  id: string;
+  mediaItemId: string;
+  filename: string;
+  url: string;
+}
+
+interface PendingDeletion {
+  id: string;
+  localPath: string;
+}
+
+async function scanMediaFiles(root: string): Promise<LocalMediaInventoryItem[]> {
+  await mkdir(root, { recursive: true });
+  const results: LocalMediaInventoryItem[] = [];
+  await scanDirectory(root, results);
+  return results;
+}
+
+async function scanDirectory(directory: string, results: LocalMediaInventoryItem[]): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const localPath = join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      await scanDirectory(localPath, results);
+      continue;
+    }
+
+    if (!entry.isFile() || !isSupportedMediaPath(localPath)) {
+      continue;
+    }
+
+    const fileStat = await stat(localPath);
+    results.push({
+      localPath,
+      title: titleFromFilename(entry.name),
+      sizeBytes: fileStat.size,
+      modifiedAt: fileStat.mtime.toISOString()
+    });
+  }
+}
+
+function isSupportedMediaPath(localPath: string): boolean {
+  return [".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi"].includes(
+    extname(localPath).toLowerCase()
+  );
+}
+
+function safeFilename(input: string): string {
+  return (
+    basename(input)
+      .replace(/[^a-zA-Z0-9._ -]/g, "_")
+      .trim() || "upload.bin"
+  );
+}
+
+function titleFromFilename(input: string): string {
+  return basename(input, extname(input)).replace(/[_-]+/g, " ").trim() || "Untitled media";
+}
+
+function isInsideMediaDir(localPath: string): boolean {
+  const mediaDir = resolve(config.values.applianceMediaDir);
+  const target = resolve(localPath);
+  const pathFromMediaDir = relative(mediaDir, target);
+  return Boolean(pathFromMediaDir) && !pathFromMediaDir.startsWith("..") && !isAbsolute(pathFromMediaDir);
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
