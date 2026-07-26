@@ -61,6 +61,7 @@ function App() {
   const [scenario, setScenario] = useState("normal");
   const [queueMessage, setQueueMessage] = useState("");
   const [primeUrl, setPrimeUrl] = useState("");
+  const [youtubeUrl, setYoutubeUrl] = useState("");
   const [status, setStatus] = useState<PlaybackStatus | undefined>();
   const [title, setTitle] = useState("Fake movie");
   const [uploading, setUploading] = useState(false);
@@ -87,12 +88,25 @@ function App() {
   }
 
   async function addPrimeItem() {
+    await addStreamingItem("/prime-queue", primeUrl, setPrimeUrl, "Enter an Amazon Prime Video URL.");
+  }
+
+  async function addYoutubeItem() {
+    await addStreamingItem("/youtube-queue", youtubeUrl, setYoutubeUrl, "Enter a YouTube URL.");
+  }
+
+  async function addStreamingItem(
+    path: string,
+    url: string,
+    clear: (value: string) => void,
+    errorMessage: string
+  ) {
     setQueueMessage("");
     try {
-      await post("/prime-queue", { url: primeUrl });
-      setPrimeUrl("");
+      await post(path, { url });
+      clear("");
     } catch {
-      setQueueMessage("Enter an Amazon Prime Video URL.");
+      setQueueMessage(errorMessage);
     }
     await refresh();
   }
@@ -316,7 +330,7 @@ function App() {
         </div>
 
         <div className="panel prime-panel">
-          <h2>Add Prime item</h2>
+          <h2>Add streaming item</h2>
           <label>
             Prime URL
             <input
@@ -326,6 +340,15 @@ function App() {
             />
           </label>
           <button onClick={() => void addPrimeItem()}>Add to queue</button>
+          <label>
+            YouTube URL
+            <input
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={youtubeUrl}
+              onChange={(event) => setYoutubeUrl(event.target.value)}
+            />
+          </label>
+          <button onClick={() => void addYoutubeItem()}>Add to queue</button>
         </div>
 
         <div className="panel output">
@@ -497,8 +520,8 @@ function formatDetail(value: unknown): string {
 }
 
 function scenarioLabel(item: MediaItem | undefined): string {
-  if (item?.service === "prime") {
-    return "prime";
+  if (item?.service === "prime" || item?.service === "youtube") {
+    return item.service;
   }
 
   const scenario = item?.metadata.scenario;

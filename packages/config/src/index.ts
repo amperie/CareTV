@@ -160,7 +160,7 @@ function readConfigFile(path: string | undefined, cwd: string): Partial<CareTvCo
     throw new ConfigError(parsed.error.issues.map((issue) => issue.message).join("; "));
   }
 
-  return withoutUndefined(parsed.data) as Partial<CareTvConfig>;
+  return withoutUndefined(parsed.data);
 }
 
 function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {

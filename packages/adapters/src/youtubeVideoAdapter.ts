@@ -7,29 +7,29 @@ import type {
   RecoveryResult,
   StreamingAdapter
 } from "./contract.js";
-import {
-  observationFromPrimeDom,
-  primeSelectors,
-  type PrimeDomState
-} from "./primeSelectors.js";
 import { durationSecondsFor } from "./videoObservation.js";
+import {
+  observationFromYouTubeDom,
+  youtubeSelectors,
+  type YouTubeDomState
+} from "./youtubeSelectors.js";
 
-interface PrimeSession {
+interface YouTubeSession {
   page?: BrowserPage;
 }
 
-export interface PrimeVideoAdapterOptions extends ChromeBrowserOptions {
+export interface YouTubeVideoAdapterOptions extends ChromeBrowserOptions {
   openPage?: (url: string) => Promise<BrowserPage>;
 }
 
-export class PrimeVideoAdapter implements StreamingAdapter {
-  public readonly id = "prime";
+export class YouTubeVideoAdapter implements StreamingAdapter {
+  public readonly id = "youtube";
   public readonly version = "0.1.0";
 
   private readonly openPage: (url: string) => Promise<BrowserPage>;
-  private readonly sessions = new Map<string, PrimeSession>();
+  private readonly sessions = new Map<string, YouTubeSession>();
 
-  public constructor(options: PrimeVideoAdapterOptions = {}) {
+  public constructor(options: YouTubeVideoAdapterOptions = {}) {
     const browser = options.openPage
       ? undefined
       : new ChromeBrowser({
@@ -41,15 +41,15 @@ export class PrimeVideoAdapter implements StreamingAdapter {
   }
 
   public supports(item: MediaItem): boolean {
-    return item.service === "prime" && Boolean(item.url);
+    return item.service === "youtube" && Boolean(item.url);
   }
 
   public prepare(context: AdapterContext): Promise<void> {
     throwIfAborted(context.signal);
-    const url = primeUrlFor(context.mediaItem);
+    const url = youtubeUrlFor(context.mediaItem);
 
-    if (!isPrimeUrl(url)) {
-      throw new Error(`Prime media item ${context.mediaItem.id} must use an Amazon Prime URL.`);
+    if (!isYouTubeUrl(url)) {
+      throw new Error(`YouTube media item ${context.mediaItem.id} must use a YouTube URL.`);
     }
 
     this.sessions.set(context.mediaItem.id, {});
@@ -59,24 +59,27 @@ export class PrimeVideoAdapter implements StreamingAdapter {
   public async start(context: AdapterContext): Promise<void> {
     throwIfAborted(context.signal);
     const session = this.session(context);
-    const page = (session.page ??= await this.openPage(primeUrlFor(context.mediaItem)));
-    await page.clickFirst(primeSelectors.playButton);
-    await page.clickByText(["play", "resume", "continue watching"]);
-    await page.evaluate<void>(`(() => {
-      const video = document.querySelector("${primeSelectors.video}");
-      if (video) return video.play().catch(() => undefined);
-    })()`);
+    const page = (session.page ??= await this.openPage(
+      normalizeYouTubeUrl(youtubeUrlFor(context.mediaItem))
+    ));
+    await this.dismissKnownInterruptions(context);
+    await page.clickFirst(youtubeSelectors.playButton);
+    await page.clickByText(["play"]);
+    await page.evaluate<void>(
+      `document.querySelector("${youtubeSelectors.video}")?.play().catch(() => undefined)`
+    );
   }
 
   public async pause(context: AdapterContext): Promise<void> {
     await this.session(context).page?.evaluate<void>(
-      `document.querySelector("${primeSelectors.video}")?.pause()`
+      `document.querySelector("${youtubeSelectors.video}")?.pause()`
     );
   }
 
   public async resume(context: AdapterContext): Promise<void> {
+    await this.dismissKnownInterruptions(context);
     await this.session(context).page?.evaluate<void>(
-      `document.querySelector("${primeSelectors.video}")?.play().catch(() => undefined)`
+      `document.querySelector("${youtubeSelectors.video}")?.play().catch(() => undefined)`
     );
   }
 
@@ -91,11 +94,11 @@ export class PrimeVideoAdapter implements StreamingAdapter {
       return;
     }
 
-    if (await page.clickFirst(primeSelectors.fullscreenButton)) {
+    if (await page.clickFirst(youtubeSelectors.fullscreenButton)) {
       return;
     }
 
-    await page.evaluate<void>(`document.querySelector("${primeSelectors.video}")?.requestFullscreen?.()`);
+    await page.evaluate<void>(`document.querySelector("${youtubeSelectors.video}")?.requestFullscreen?.()`);
   }
 
   public async observe(context: AdapterContext): Promise<PlaybackObservation> {
@@ -106,8 +109,9 @@ export class PrimeVideoAdapter implements StreamingAdapter {
       return { status: "ready", positionSeconds: 0 };
     }
 
-    const state = await page.evaluate<PrimeDomState>(`(() => {
-      const video = document.querySelector("${primeSelectors.video}");
+    await this.dismissKnownInterruptions(context);
+    const state = await page.evaluate<YouTubeDomState>(`(() => {
+      const video = document.querySelector("${youtubeSelectors.video}");
       return {
         currentTime: video?.currentTime,
         duration: Number.isFinite(video?.duration) ? video.duration : undefined,
@@ -119,7 +123,7 @@ export class PrimeVideoAdapter implements StreamingAdapter {
         text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim()
       };
     })()`);
-    return observationFromPrimeDom(state, durationSecondsFor(context.mediaItem));
+    return observationFromYouTubeDom(state, durationSecondsFor(context.mediaItem, 900));
   }
 
   public async dismissKnownInterruptions(context: AdapterContext): Promise<boolean> {
@@ -129,11 +133,13 @@ export class PrimeVideoAdapter implements StreamingAdapter {
       return false;
     }
 
-    return page.clickByText(["continue watching", "not now"]);
+    const skippedAd = await page.clickFirst(youtubeSelectors.skipAdButton);
+    const dismissed = await page.clickByText(["skip ads", "skip ad", "no thanks", "not now", "i agree"]);
+    return skippedAd || dismissed;
   }
 
   public recover(): Promise<RecoveryResult> {
-    return Promise.resolve({ recovered: false, message: "Prime recovery is not implemented yet." });
+    return Promise.resolve({ recovered: false, message: "YouTube recovery is not implemented yet." });
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
@@ -142,29 +148,43 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     this.sessions.delete(context.mediaItem.id);
   }
 
-  private session(context: AdapterContext): PrimeSession {
+  private session(context: AdapterContext): YouTubeSession {
     const session = this.sessions.get(context.mediaItem.id);
 
     if (!session) {
-      throw new Error(`Prime session was not prepared for ${context.mediaItem.id}`);
+      throw new Error(`YouTube session was not prepared for ${context.mediaItem.id}`);
     }
 
     return session;
   }
 }
 
-function isPrimeUrl(input: string): boolean {
+function isYouTubeUrl(input: string): boolean {
   try {
-    const host = new URL(input).hostname;
-    return host.includes("amazon.") || host.endsWith("primevideo.com");
+    const host = new URL(input).hostname.replace(/^www\./, "");
+    return host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be";
   } catch {
     return false;
   }
 }
 
-function primeUrlFor(item: MediaItem): string {
+function normalizeYouTubeUrl(input: string): string {
+  const url = new URL(input);
+
+  if (url.hostname.replace(/^www\./, "") === "youtu.be") {
+    const id = url.pathname.split("/").filter(Boolean)[0];
+
+    if (id) {
+      return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+    }
+  }
+
+  return url.href;
+}
+
+function youtubeUrlFor(item: MediaItem): string {
   if (!item.url) {
-    throw new Error(`Prime media item ${item.id} has no URL.`);
+    throw new Error(`YouTube media item ${item.id} has no URL.`);
   }
 
   return item.url;

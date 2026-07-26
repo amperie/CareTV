@@ -15,13 +15,14 @@ This repository currently contains the Phase 0/1 local prototype:
 - shared package structure
 - SQLite repositories for media, queue, commands, events, settings, and appliance heartbeat
 - appliance local-media inventory sync and upload download jobs
-- fake playback adapter, local-file adapter, Prime Video adapter, and state machine
+- fake playback adapter, local-file adapter, Prime Video adapter, YouTube adapter, and state machine
 - strict TypeScript, ESLint, Prettier, and Vitest configuration
 - Windows-focused startup script
 
-Prime Video automation is implemented as an early browser adapter. It requires a manually signed-in
-persistent Chrome profile on the appliance and must be validated on physical Windows hardware with a
-real HDMI display because DRM playback can fail in virtualized or remote-display environments.
+Prime Video and YouTube automation are implemented as early browser adapters. Prime requires a
+manually signed-in persistent Chrome profile on the appliance and must be validated on physical
+Windows hardware with a real HDMI display because DRM playback can fail in virtualized or
+remote-display environments.
 
 ## Architecture
 
@@ -85,7 +86,7 @@ flowchart LR
 3. `apps/appliance-agent` polls the server for playback settings. When playback is enabled, it claims
    the next queued entry and fetches the media item.
 4. The appliance selects an adapter. Today that is deterministic fake playback, local-file playback,
-   or Prime Video playback in `@caretv/adapters`.
+   Prime Video playback, or YouTube playback in `@caretv/adapters`.
 5. The appliance uses `@caretv/state-machine` to turn observations and commands into explicit
    playback states, then reports heartbeats/events/status updates back to the server.
 6. The dashboard reads `/api/v1/playback/status` to show queue state, appliance state, and recent
@@ -102,7 +103,8 @@ flowchart LR
 - `@caretv/core`: shared domain types and health helpers.
 - `@caretv/config`: config file and environment loading, validation, path normalization, and redacted config output.
 - `@caretv/database`: SQLite migrations and repositories.
-- `@caretv/adapters`: playback adapter contract plus deterministic fake, local-file, and Prime adapters.
+- `@caretv/adapters`: playback adapter contract plus deterministic fake, local-file, Prime, and
+  YouTube adapters.
 - `@caretv/state-machine`: allowed playback transitions and event generation.
 - `@caretv/playback-agent`: in-process fake playback runner used by the server-side prototype path.
 
@@ -274,16 +276,28 @@ Fake playback is deterministic. Local-file playback launches Google Chrome with 
 persistent profile, opens a generated HTML5 player page, loads the appliance-local file, and controls
 playback through Chrome DevTools Protocol.
 
-## Prime Video
+## Streaming URLs
 
-Prime items are queued from the dashboard with a title and an Amazon Prime Video URL. The adapter
-opens the URL in visible Chrome through the appliance's persistent `CARETV_CHROME_PROFILE_DIR`, tries
-to start or resume playback, enters fullscreen, observes the page video element, and reports common
-blockers such as sign-in, profile selection, purchase/rental requirements, unavailable titles, and
-playback errors.
+Prime and YouTube items are queued from the dashboard with URLs. The server resolves the page title
+from standard page metadata and stores that title on the media item, so the queue and playback UI show
+human-readable titles rather than URLs.
+
+The streaming adapters open the URL in visible Chrome through the appliance's persistent
+`CARETV_CHROME_PROFILE_DIR`, try to start or resume playback, enter fullscreen, observe the page video
+element, and report common blockers such as sign-in, profile selection, purchase/rental requirements,
+unavailable titles, age restrictions, and playback errors.
 
 Before testing Prime, start Chrome through the appliance profile and sign into Amazon manually once.
-Do not store Amazon credentials in CareTV. Use included-with-Prime titles for validation.
+Do not store Amazon credentials in CareTV. Use included-with-Prime titles for validation. YouTube can
+play public videos without login, but age-restricted or private videos will be reported as blocked.
+
+Shared adapter components live in `packages/adapters/src`:
+
+- `browserPage.ts`: visible Chrome launch, persistent profile reuse, Chrome DevTools Protocol page
+  creation, selector clicks, text-button clicks, and page evaluation.
+- `videoObservation.ts`: generic HTML5 video state mapping into CareTV playback observations.
+- Service selector modules: Prime and YouTube keep service-specific selectors and blocker detection
+  out of the appliance orchestration loop.
 
 ## Local Media Inventory And Uploads
 

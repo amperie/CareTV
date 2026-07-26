@@ -322,6 +322,45 @@ app.post("/api/v1/prime-queue", async (request, reply) => {
   return { item, entry };
 });
 
+app.post("/api/v1/youtube-queue", async (request, reply) => {
+  const body = parseBody(request.body);
+  const url = stringField(body, "url", "");
+
+  if (!isYouTubeUrl(url)) {
+    reply.code(400);
+    return { error: "youtube-url-required" };
+  }
+
+  const now = new Date().toISOString();
+  const title = await titleForYouTubeUrl(url, stringOptional(body.title));
+  const item: MediaItem = {
+    id: crypto.randomUUID(),
+    title,
+    service: "youtube",
+    mediaType: "video",
+    url,
+    enabled: true,
+    repeatable: true,
+    expectedDurationSeconds: numberField(body, "durationSeconds", 900),
+    metadata: { sourceUrl: url },
+    createdAt: now,
+    updatedAt: now
+  };
+  const entry: QueueEntry = {
+    id: crypto.randomUUID(),
+    mediaItemId: item.id,
+    position: queue.nextPosition(),
+    priority: 0,
+    status: "queued",
+    attemptCount: 0
+  };
+
+  media.create(item);
+  queue.enqueue(entry);
+  reply.code(201);
+  return { item, entry };
+});
+
 app.post("/api/v1/playback/start", () => {
   if (queue.runnableCount() === 0) {
     queue.requeueCompletedEntries();
@@ -791,11 +830,45 @@ function isPrimeUrl(input: string): boolean {
 }
 
 async function titleForPrimeUrl(url: string, fallback?: string): Promise<string> {
-  const remoteTitle = await fetchPrimeTitle(url);
+  const remoteTitle = await fetchStreamingTitle(url);
   return remoteTitle ?? fallback ?? titleFromPrimeUrl(url);
 }
 
-async function fetchPrimeTitle(url: string): Promise<string | undefined> {
+async function titleForStreamingUrl(
+  url: string,
+  fallback: string | undefined,
+  defaultTitle: string
+): Promise<string> {
+  const remoteTitle = await fetchStreamingTitle(url);
+  return remoteTitle ?? fallback ?? defaultTitle;
+}
+
+async function titleForYouTubeUrl(url: string, fallback?: string): Promise<string> {
+  return (await fetchYouTubeTitle(url)) ?? (await titleForStreamingUrl(url, fallback, "YouTube Video"));
+}
+
+async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
+  try {
+    const endpoint = new URL("https://www.youtube.com/oembed");
+    endpoint.searchParams.set("url", url);
+    endpoint.searchParams.set("format", "json");
+    const response = await fetch(endpoint, {
+      headers: { "accept": "application/json" },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const body = (await response.json()) as { title?: unknown };
+    return typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function fetchStreamingTitle(url: string): Promise<string | undefined> {
   try {
     const response = await fetch(url, {
       headers: {
@@ -810,7 +883,7 @@ async function fetchPrimeTitle(url: string): Promise<string | undefined> {
     }
 
     const html = await response.text();
-    return cleanPrimeTitle(
+    return cleanStreamingTitle(
       matchMeta(html, "og:title") ?? matchMeta(html, "twitter:title") ?? matchTitle(html)
     );
   } catch {
@@ -831,15 +904,19 @@ function matchTitle(html: string): string | undefined {
   return /<title[^>]*>([^<]+)<\/title>/i.exec(html)?.[1];
 }
 
-function cleanPrimeTitle(input: string | undefined): string | undefined {
+function cleanStreamingTitle(input: string | undefined): string | undefined {
   if (!input) {
     return undefined;
   }
 
   const decoded = decodeHtml(input)
-    .replace(/\s*-\s*(Prime Video|Amazon\.com).*$/i, "")
-    .replace(/\s*\|\s*(Prime Video|Amazon\.com).*$/i, "")
+    .replace(/\s*-\s*(Prime Video|Amazon\.com|YouTube).*$/i, "")
+    .replace(/\s*\|\s*(Prime Video|Amazon\.com|YouTube).*$/i, "")
     .trim();
+  if (/^before you continue/i.test(decoded)) {
+    return undefined;
+  }
+
   return decoded || undefined;
 }
 
@@ -862,5 +939,14 @@ function titleFromPrimeUrl(input: string): string {
     return pathTitle ? titleFromFilename(pathTitle.replace(/[-_]+/g, " ")) : "Prime Video";
   } catch {
     return "Prime Video";
+  }
+}
+
+function isYouTubeUrl(input: string): boolean {
+  try {
+    const host = new URL(input).hostname.replace(/^www\./, "");
+    return host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be";
+  } catch {
+    return false;
   }
 }

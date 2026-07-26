@@ -1,7 +1,12 @@
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { FakeStreamingAdapter, LocalFileAdapter, PrimeVideoAdapter } from "@caretv/adapters";
+import {
+  FakeStreamingAdapter,
+  LocalFileAdapter,
+  PrimeVideoAdapter,
+  YouTubeVideoAdapter
+} from "@caretv/adapters";
 import type { AdapterContext, PlaybackObservation, StreamingAdapter } from "@caretv/adapters";
 import { loadConfig } from "@caretv/config";
 import type { MediaItem, PlaybackCommand, PlaybackState, QueueEntry } from "@caretv/core";
@@ -10,6 +15,7 @@ import type { PlaybackStateEvent } from "@caretv/state-machine";
 
 const config = loadConfig();
 const adapters: StreamingAdapter[] = [
+  new YouTubeVideoAdapter({ userDataDir: config.values.chromeProfileDir }),
   new PrimeVideoAdapter({ userDataDir: config.values.chromeProfileDir }),
   new LocalFileAdapter({ userDataDir: config.values.chromeProfileDir }),
   new FakeStreamingAdapter()

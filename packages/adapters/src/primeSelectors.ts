@@ -1,13 +1,7 @@
 import type { PlaybackObservation } from "./contract.js";
+import { videoObservation, type VideoDomState } from "./videoObservation.js";
 
-export interface PrimeDomState {
-  currentTime?: number;
-  duration?: number;
-  ended?: boolean;
-  fullscreen?: boolean;
-  hasVideo: boolean;
-  paused?: boolean;
-  readyState?: number;
+export interface PrimeDomState extends VideoDomState {
   text: string;
 }
 
@@ -47,34 +41,5 @@ export function observationFromPrimeDom(
     };
   }
 
-  if (!state.hasVideo) {
-    return { status: "ready", positionSeconds: 0 };
-  }
-
-  const positionSeconds = Math.max(0, Math.floor(state.currentTime ?? 0));
-  const durationSeconds = Math.max(1, Math.floor(state.duration ?? fallbackDurationSeconds));
-
-  if (state.ended || positionSeconds >= durationSeconds) {
-    return observation("completed", positionSeconds, durationSeconds, state.fullscreen);
-  }
-
-  if ((state.readyState ?? 0) < 2) {
-    return observation("buffering", positionSeconds, durationSeconds, state.fullscreen);
-  }
-
-  return observation(
-    state.paused ? "paused" : "playing",
-    positionSeconds,
-    durationSeconds,
-    state.fullscreen
-  );
-}
-
-function observation(
-  status: PlaybackObservation["status"],
-  positionSeconds: number,
-  durationSeconds: number,
-  fullscreen = false
-): PlaybackObservation {
-  return { durationSeconds, fullscreen, positionSeconds, status };
+  return videoObservation(state, fallbackDurationSeconds);
 }
