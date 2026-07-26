@@ -24,8 +24,10 @@ export class ChromeBrowser {
 
   public async open(url: string): Promise<BrowserPage> {
     await this.ensureBrowser();
-    const target = await createTarget(this.port(), url);
-    return CdpBrowserPage.connect(target.webSocketDebuggerUrl);
+    const target = await singlePageTarget(this.port(), url);
+    const page = await CdpBrowserPage.connect(target.webSocketDebuggerUrl);
+    await page.navigate(url);
+    return page;
   }
 
   private async ensureBrowser(): Promise<void> {
@@ -139,9 +141,13 @@ class CdpBrowserPage implements BrowserPage {
     })()`);
   }
 
-  public close(): Promise<void> {
+  public async close(): Promise<void> {
+    await this.send("Page.close", {}).catch(() => undefined);
     this.socket.close();
-    return Promise.resolve();
+  }
+
+  public async navigate(url: string): Promise<void> {
+    await this.send("Page.navigate", { url });
   }
 
   public evaluate<T>(expression: string): Promise<T> {
@@ -174,7 +180,35 @@ interface WebSocketLike {
 }
 
 interface ChromeTarget {
+  id: string;
+  type?: string;
   webSocketDebuggerUrl: string;
+}
+
+async function singlePageTarget(port: number, url: string): Promise<ChromeTarget> {
+  const existing = await firstPageTarget(port);
+
+  if (existing) {
+    await fetch(`http://127.0.0.1:${port}/json/activate/${existing.id}`).catch(() => undefined);
+    return existing;
+  }
+
+  return createTarget(port, url);
+}
+
+async function firstPageTarget(port: number): Promise<ChromeTarget | undefined> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const targets = (await response.json()) as ChromeTarget[];
+    return targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+  } catch {
+    return undefined;
+  }
 }
 
 async function createTarget(port: number, url: string): Promise<ChromeTarget> {

@@ -417,10 +417,6 @@ app.post("/api/v1/appliance/heartbeat", (request) => {
     state
   );
 
-  if (state?.phase === "idle") {
-    queue.reconcileStaleActive("failed", "appliance-idle");
-  }
-
   return { ok: true, playback: playbackSettings() };
 });
 
