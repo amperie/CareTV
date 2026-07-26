@@ -60,6 +60,7 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     throwIfAborted(context.signal);
     const session = this.session(context);
     const page = (session.page ??= await this.openPage(primeUrlFor(context.mediaItem)));
+    await page.waitForSelector([primeSelectors.video, ...primeSelectors.playButton]);
     await page.clickFirst(primeSelectors.playButton);
     await page.clickByText(["play", "resume", "continue watching"]);
     await page.evaluate<void>(`(() => {
@@ -90,6 +91,8 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     if (!page) {
       return;
     }
+
+    await page.waitForSelector([primeSelectors.video, ...primeSelectors.fullscreenButton], 5_000);
 
     if (await page.clickFirst(primeSelectors.fullscreenButton)) {
       return;

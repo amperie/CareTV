@@ -62,6 +62,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     const page = (session.page ??= await this.openPage(
       normalizeYouTubeUrl(youtubeUrlFor(context.mediaItem))
     ));
+    await page.waitForSelector([youtubeSelectors.video, ...youtubeSelectors.playButton]);
     await this.dismissKnownInterruptions(context);
     await page.clickFirst(youtubeSelectors.playButton);
     await page.clickByText(["play"]);
@@ -93,6 +94,8 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     if (!page) {
       return;
     }
+
+    await page.waitForSelector([youtubeSelectors.video, ...youtubeSelectors.fullscreenButton], 5_000);
 
     if (await page.clickFirst(youtubeSelectors.fullscreenButton)) {
       return;

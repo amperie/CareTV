@@ -153,7 +153,6 @@ function App() {
 
   async function stopPlayback() {
     await post("/playback/stop", {});
-    await post("/commands", { type: "stop" });
     await refresh();
   }
 

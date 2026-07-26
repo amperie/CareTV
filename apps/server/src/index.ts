@@ -227,8 +227,10 @@ app.post("/api/v1/queue/:id/play", (request, reply) => {
     return { error: "queue-entry-not-playable" };
   }
 
-  if (queue.hasActive()) {
-    commands.create(createCommand("skip"));
+  const active = queue.active();
+
+  if (active) {
+    commands.create(createCommand("skip", active.mediaItemId));
   }
 
   return setPlaybackSettings({ enabled: true });
@@ -370,7 +372,12 @@ app.post("/api/v1/playback/start", () => {
 });
 app.post("/api/v1/playback/stop", () => {
   const status = setPlaybackSettings({ enabled: false });
-  commands.create(createCommand("stop"));
+  const active = queue.active();
+
+  if (active) {
+    commands.create(createCommand("stop", active.mediaItemId));
+  }
+
   return status;
 });
 app.post("/api/v1/playback/loop", (request) => {
@@ -704,10 +711,11 @@ function parseBody(body: unknown): Record<string, unknown> {
     : {};
 }
 
-function createCommand(type: PlaybackCommandType): PlaybackCommand {
+function createCommand(type: PlaybackCommandType, mediaItemId?: string): PlaybackCommand {
   return {
     id: crypto.randomUUID(),
     type,
+    ...(mediaItemId ? { mediaItemId } : {}),
     issuedAt: new Date().toISOString(),
     issuedBy: "dashboard",
     status: "pending"

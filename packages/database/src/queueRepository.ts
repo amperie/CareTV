@@ -338,6 +338,16 @@ export class QueueRepository {
     return this.activeCount() > 0;
   }
 
+  public active(): QueueEntry | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM queue_entries WHERE status IN ('starting', 'playing', 'paused') ORDER BY started_at DESC LIMIT 1"
+      )
+      .get() as unknown as QueueRow | undefined;
+
+    return row ? mapQueueRow(row) : undefined;
+  }
+
   private activeCount(): number {
     const row = this.db
       .prepare(

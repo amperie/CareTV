@@ -236,7 +236,15 @@ async function monitor(
   streamingAdapter: StreamingAdapter,
   context: AdapterContext
 ): Promise<"completed" | "failed" | "skipped"> {
-  for (let count = 0; count < 600; count += 1) {
+  const startedAt = Date.now();
+  const maxRuntimeMs = maxRuntimeMsFor(mediaItem);
+
+  for (;;) {
+    if (Date.now() - startedAt > maxRuntimeMs) {
+      await fail(queueEntry.id, "observation-limit", `Playback did not finish: ${mediaItem.title}`);
+      return "failed";
+    }
+
     const commandResult = await applyCommands(queueEntry.id, streamingAdapter, context);
 
     if (commandResult) {
@@ -253,9 +261,6 @@ async function monitor(
 
     await sleep(config.values.appliancePlaybackObserveMs);
   }
-
-  await fail(queueEntry.id, "observation-limit", `Playback did not finish: ${mediaItem.title}`);
-  return "failed";
 }
 
 async function applyCommands(
@@ -408,6 +413,16 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
+}
+
+function maxRuntimeMsFor(mediaItem: MediaItem): number {
+  const expectedDurationSeconds =
+    typeof mediaItem.metadata.durationSeconds === "number" &&
+    Number.isFinite(mediaItem.metadata.durationSeconds)
+      ? mediaItem.metadata.durationSeconds
+      : mediaItem.expectedDurationSeconds;
+  const expectedMs = (expectedDurationSeconds ?? 6 * 60 * 60) * 1000;
+  return Math.max(60 * 60 * 1000, expectedMs + 30 * 60 * 1000);
 }
 
 async function heartbeat(force = false): Promise<void> {

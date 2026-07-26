@@ -177,6 +177,7 @@ class ChromeLocalPlayerBrowser {
     const target = await singlePageTarget(this.port(), playerUrl);
     const page = await CdpPlayerPage.connect(target.webSocketDebuggerUrl);
     await page.navigate(playerUrl);
+    await page.waitForReady();
     return page;
   }
 
@@ -266,12 +267,26 @@ class CdpPlayerPage implements PlayerPage {
   }
 
   public async close(): Promise<void> {
-    await this.send("Page.close", {}).catch(() => undefined);
+    await this.navigate("about:blank").catch(() => undefined);
     this.socket.close();
   }
 
   public async navigate(url: string): Promise<void> {
     await this.send("Page.navigate", { url });
+  }
+
+  public async waitForReady(timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      if (await this.evaluate("Boolean(window.caretv)") === true) {
+        return true;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return false;
   }
 
   public enterFullscreen(): Promise<void> {

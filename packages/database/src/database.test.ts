@@ -81,6 +81,19 @@ describe("database repositories", () => {
     });
   });
 
+  it("returns the current active queue entry", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue(fakeQueueEntry("queued", "media-1", 1));
+      queue.enqueue({ ...fakeQueueEntry("active", "media-1", 2), status: "playing" });
+
+      expect(queue.active()).toMatchObject({ id: "active", mediaItemId: "media-1" });
+    });
+  });
+
   it("does not overwrite terminal queue status", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

@@ -9,6 +9,7 @@ export interface BrowserPage {
   clickFirst(selectors: string[]): Promise<boolean>;
   close(): Promise<void>;
   evaluate<T>(expression: string): Promise<T>;
+  waitForSelector(selectors: string[], timeoutMs?: number): Promise<boolean>;
 }
 
 export interface ChromeBrowserOptions {
@@ -127,6 +128,20 @@ class CdpBrowserPage implements BrowserPage {
     })()`);
   }
 
+  public async waitForSelector(selectors: string[], timeoutMs = 10_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      if (await this.hasSelector(selectors)) {
+        return true;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    return false;
+  }
+
   public async clickByText(text: string[]): Promise<boolean> {
     return this.evaluate<boolean>(`(() => {
       const needles = ${JSON.stringify(text)}.map((value) => value.toLowerCase());
@@ -142,7 +157,7 @@ class CdpBrowserPage implements BrowserPage {
   }
 
   public async close(): Promise<void> {
-    await this.send("Page.close", {}).catch(() => undefined);
+    await this.navigate("about:blank").catch(() => undefined);
     this.socket.close();
   }
 
@@ -156,6 +171,19 @@ class CdpBrowserPage implements BrowserPage {
       expression,
       returnByValue: true
     }) as Promise<T>;
+  }
+
+  private hasSelector(selectors: string[]): Promise<boolean> {
+    return this.evaluate<boolean>(`(() => {
+      for (const selector of ${JSON.stringify(selectors)}) {
+        try {
+          if (document.querySelector(selector)) return true;
+        } catch {
+          continue;
+        }
+      }
+      return false;
+    })()`);
   }
 
   private send(method: string, params: Record<string, unknown>): Promise<unknown> {
