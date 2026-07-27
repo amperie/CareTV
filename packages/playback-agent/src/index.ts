@@ -174,6 +174,10 @@ export class PlaybackAgent {
     context: Parameters<StreamingAdapter["observe"]>[0]
   ): Promise<AgentRunResult | undefined> {
     for (const command of this.options.commands.listPending()) {
+      if (command.type === "login-youtube" || command.type === "login-prime") {
+        continue;
+      }
+
       if (command.mediaItemId && command.mediaItemId !== context.mediaItem.id) {
         this.options.commands.updateStatus(command.id, "failed");
         continue;

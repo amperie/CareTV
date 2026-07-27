@@ -2,9 +2,11 @@ import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
+  closeLoginBrowsers,
   FakeStreamingAdapter,
   isBrowserPageClosedError,
   LocalFileAdapter,
+  openLoginBrowser,
   PrimeVideoAdapter,
   YouTubeVideoAdapter
 } from "@caretv/adapters";
@@ -44,6 +46,7 @@ async function main(): Promise<void> {
   for (;;) {
     try {
       await mediaMaintenance();
+      await applyLoginCommands();
       const playback = await pollPlaybackSettings();
 
       if (!playback) {
@@ -74,6 +77,32 @@ async function main(): Promise<void> {
         })
       );
       await sleep(config.values.appliancePollMs);
+    }
+  }
+}
+
+async function applyLoginCommands(): Promise<void> {
+  for (const command of await client.pendingCommands()) {
+    if (command.type !== "login-youtube" && command.type !== "login-prime") {
+      continue;
+    }
+
+    await client.updateCommand(command.id, "accepted");
+    try {
+      await openLoginBrowser(command.type === "login-youtube" ? "youtube" : "prime", {
+        userDataDir: config.values.chromeProfileDir
+      });
+      await client.updateCommand(command.id, "completed");
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Login browser launch failed.",
+          command: command.type,
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
+      await client.updateCommand(command.id, "failed");
     }
   }
 }
@@ -212,6 +241,7 @@ async function play(queueEntry: QueueEntry): Promise<void> {
       adapterId: adapter.id,
       title: mediaItem.title
     });
+    await closeLoginBrowsers();
     await adapter.prepare(context);
     await apply({ type: "BROWSER_LAUNCHED" });
     await adapter.start(context);
@@ -303,6 +333,10 @@ async function applyCommands(
   context: AdapterContext
 ): Promise<"skipped" | undefined> {
   for (const command of await client.pendingCommands()) {
+    if (command.type === "login-youtube" || command.type === "login-prime") {
+      continue;
+    }
+
     if (command.mediaItemId && command.mediaItemId !== context.mediaItem.id) {
       await client.updateCommand(command.id, "failed");
       continue;

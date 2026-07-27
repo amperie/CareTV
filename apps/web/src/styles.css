@@ -1,5 +1,5 @@
 :root {
-  background: #eef2f5;
+  background: #f4f6f8;
   color: #1b242c;
   font-family:
     Inter,
@@ -26,18 +26,18 @@ select {
 }
 
 button {
-  background: #246b54;
+  background: #1f6f5b;
   border: 0;
   border-radius: 6px;
   color: #fff;
   cursor: pointer;
   font-weight: 700;
   min-height: 40px;
-  padding: 9px 14px;
+  padding: 9px 16px;
 }
 
 button:hover {
-  background: #1c5543;
+  background: #195b4b;
 }
 
 button.secondary {
@@ -94,7 +94,7 @@ select {
 
 .app {
   margin: 0 auto;
-  max-width: 1280px;
+  max-width: 1440px;
   padding: 24px;
 }
 
@@ -147,39 +147,45 @@ h2 {
 }
 
 .tabs {
+  background: #dde5ea;
+  border-radius: 8px;
   display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 4px;
+  width: fit-content;
 }
 
 .tab {
-  background: #dde5ea;
-  color: #24323d;
+  background: transparent;
+  color: #34424d;
+  min-height: 34px;
+  padding: 7px 14px;
 }
 
 .tab.active {
-  background: #246b54;
-  color: #fff;
+  background: #fff;
+  color: #1b242c;
 }
 
 .tab:hover {
-  background: #cbd6dd;
+  background: #edf2f5;
 }
 
 .tab.active:hover {
-  background: #1c5543;
+  background: #fff;
 }
 
 .layout {
   display: grid;
   gap: 16px;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .media-layout {
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
 }
 
 .events-layout {
@@ -191,27 +197,38 @@ h2 {
   background: #fff;
   border: 1px solid #d8e0e5;
   border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(16 24 32 / 4%);
   padding: 16px;
-}
-
-.controls {
-  display: grid;
-  gap: 12px;
 }
 
 .media-panel {
   display: grid;
   gap: 10px;
+  grid-row: span 3;
 }
 
 .prime-panel {
+  align-content: start;
   display: grid;
   gap: 12px;
 }
 
 .playlist-panel {
+  align-content: start;
   display: grid;
   gap: 12px;
+}
+
+.queue {
+  grid-column: 1 / -1;
+}
+
+.events {
+  grid-column: span 1;
+}
+
+.events-layout .events {
+  grid-column: 1;
 }
 
 .playlist-selection {
@@ -297,7 +314,7 @@ label {
   display: grid;
   gap: 12px;
   margin-top: 4px;
-  min-height: 300px;
+  min-height: 340px;
   overflow: hidden;
   padding: 28px;
 }
@@ -342,6 +359,10 @@ label {
   margin-top: 14px;
 }
 
+.compact-row {
+  margin-top: 0;
+}
+
 .appliance-line {
   color: #60717e;
   font-size: 0.88rem;
@@ -351,11 +372,7 @@ label {
 
 .queue,
 .events {
-  grid-column: span 1;
-}
-
-.events-layout .events {
-  grid-column: 1;
+  min-width: 0;
 }
 
 .section-header {
@@ -368,6 +385,13 @@ label {
 
 .section-header h2 {
   margin-bottom: 0;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .compact {
@@ -384,11 +408,24 @@ label {
   overflow: auto;
 }
 
+.queue .rows {
+  max-height: 520px;
+}
+
 .queue-message {
   color: #7a4c00;
   font-size: 0.84rem;
   font-weight: 700;
   margin-bottom: 10px;
+}
+
+.media-message {
+  background: #fff6df;
+  border: 1px solid #efd391;
+  border-radius: 8px;
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+  padding: 10px 12px;
 }
 
 .row {
@@ -397,12 +434,19 @@ label {
   display: grid;
   gap: 12px;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  padding: 8px 0;
+  min-height: 54px;
+  padding: 10px 0;
 }
 
 .row div {
   display: grid;
   gap: 2px;
+  min-width: 0;
+}
+
+.row strong {
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .row span,
@@ -419,6 +463,8 @@ small {
 .row .row-actions {
   display: flex;
   gap: 4px;
+  justify-content: flex-end;
+  min-width: max-content;
 }
 
 .media-row {
@@ -446,6 +492,10 @@ small {
   font-size: 0.72rem;
   min-height: 28px;
   padding: 4px 7px;
+}
+
+.queue .icon-button {
+  min-width: 58px;
 }
 
 .icon-button:hover {
@@ -486,6 +536,8 @@ small {
   font-size: 0.78rem;
   font-weight: 800;
   padding: 4px 8px;
+  text-align: center;
+  min-width: 78px;
 }
 
 .badge.playing,

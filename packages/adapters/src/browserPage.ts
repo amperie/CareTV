@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export interface BrowserPage {
+  bringToFront(): Promise<void>;
   clickByText(text: string[]): Promise<boolean>;
   clickCenterFirst(selectors: string[]): Promise<boolean>;
   clickFirst(selectors: string[]): Promise<boolean>;
@@ -22,6 +23,10 @@ export interface ChromeBrowserOptions {
   userDataDir?: string;
 }
 
+export type LoginBrowserService = "prime" | "youtube";
+
+const loginProcesses = new Set<ChildProcessWithoutNullStreams>();
+
 export class ChromeBrowser {
   private process: ChildProcessWithoutNullStreams | undefined;
 
@@ -29,9 +34,11 @@ export class ChromeBrowser {
 
   public async open(url: string): Promise<BrowserPage> {
     await this.ensureBrowser();
-    const target = await singlePageTarget(this.port(), url);
+    await closePageTargets(this.port());
+    const target = await createTarget(this.port(), url);
     const page = await CdpBrowserPage.connect(target.webSocketDebuggerUrl);
     await page.navigate(url);
+    await page.bringToFront();
     return page;
   }
 
@@ -65,6 +72,54 @@ export class ChromeBrowser {
   private port(): number {
     return this.options.remoteDebuggingPort ?? 9223;
   }
+}
+
+export async function openLoginBrowser(
+  service: LoginBrowserService,
+  options: Pick<ChromeBrowserOptions, "chromePath" | "remoteDebuggingPort" | "userDataDir"> = {}
+): Promise<void> {
+  const port = options.remoteDebuggingPort ?? 9223;
+  const url = loginUrl(service);
+
+  if (await isDebugPortReady(port)) {
+    const target = await createTarget(port, url);
+    await fetch(`http://127.0.0.1:${port}/json/activate/${target.id}`).catch(() => undefined);
+    return;
+  }
+
+  const chromePath = options.chromePath ?? findChromePath();
+  const userDataDir = options.userDataDir ?? join(tmpdir(), "caretv-chrome-profile");
+  await mkdir(userDataDir, { recursive: true });
+  const child = spawn(chromePath, [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${userDataDir}`,
+    "--autoplay-policy=no-user-gesture-required",
+    "--disable-session-crashed-bubble",
+    "--new-window",
+    url
+  ]);
+  loginProcesses.add(child);
+  child.once("exit", () => loginProcesses.delete(child));
+  child.unref();
+  await waitForDebugPort(port);
+}
+
+export async function closeLoginBrowsers(
+  options: Pick<ChromeBrowserOptions, "remoteDebuggingPort"> = {}
+): Promise<void> {
+  const port = options.remoteDebuggingPort ?? 9223;
+
+  if (await isDebugPortReady(port)) {
+    await closePageTargets(port);
+    return;
+  }
+
+  for (const child of loginProcesses) {
+    if (!child.killed) {
+      child.kill();
+    }
+  }
+  loginProcesses.clear();
 }
 
 class CdpBrowserPage implements BrowserPage {
@@ -221,6 +276,10 @@ class CdpBrowserPage implements BrowserPage {
     this.socket.close();
   }
 
+  public async bringToFront(): Promise<void> {
+    await this.send("Page.bringToFront", {});
+  }
+
   public async navigate(url: string): Promise<void> {
     await this.send("Page.navigate", { url });
   }
@@ -308,6 +367,15 @@ function browserPageClosedError(): Error {
   return new Error(browserPageClosedCode);
 }
 
+function loginUrl(service: LoginBrowserService): string {
+  switch (service) {
+    case "youtube":
+      return "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.youtube.com%2F";
+    case "prime":
+      return "https://www.amazon.com/ap/signin";
+  }
+}
+
 interface WebSocketLike {
   addEventListener(
     type: "open" | "message" | "error" | "close",
@@ -321,33 +389,31 @@ interface WebSocketLike {
 interface ChromeTarget {
   id: string;
   type?: string;
+  url?: string;
   webSocketDebuggerUrl: string;
 }
 
-async function singlePageTarget(port: number, url: string): Promise<ChromeTarget> {
-  const existing = await firstPageTarget(port);
-
-  if (existing) {
-    await fetch(`http://127.0.0.1:${port}/json/activate/${existing.id}`).catch(() => undefined);
-    return existing;
-  }
-
-  return createTarget(port, url);
-}
-
-async function firstPageTarget(port: number): Promise<ChromeTarget | undefined> {
+async function pageTargets(port: number): Promise<ChromeTarget[]> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`);
 
     if (!response.ok) {
-      return undefined;
+      return [];
     }
 
     const targets = (await response.json()) as ChromeTarget[];
-    return targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+    return targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl);
   } catch {
-    return undefined;
+    return [];
   }
+}
+
+async function closePageTargets(port: number): Promise<void> {
+  await Promise.all(
+    (await pageTargets(port)).map((target) =>
+      fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined)
+    )
+  );
 }
 
 async function createTarget(port: number, url: string): Promise<ChromeTarget> {

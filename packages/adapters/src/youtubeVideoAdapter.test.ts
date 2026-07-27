@@ -31,13 +31,38 @@ describe("youtube video adapter", () => {
     expect(page.evaluations.some((expression) => expression.includes("currentTime = 0"))).toBe(
       true
     );
-    expect(page.centerClickSelectors).toContain(".ytp-fullscreen-button");
+    expect(
+      page.evaluations.some((expression) => expression.includes("caretv-youtube-full-window"))
+    ).toBe(true);
+    expect(page.centerClickSelectors).toHaveLength(0);
+    expect(page.pressKeyCount).toBe(0);
+  });
+
+  it("does not toggle fullscreen off when called repeatedly", async () => {
+    const page = new FakeBrowserPage();
+    const adapter = new YouTubeVideoAdapter({
+      openPage: () => Promise.resolve(page)
+    });
+    const context = youtubeContext("https://youtu.be/abc123");
+
+    await adapter.prepare(context);
+    await adapter.start(context);
+    await adapter.enterFullscreen(context);
+
+    expect(page.centerClickSelectors).toHaveLength(0);
+    expect(page.pressKeyCount).toBe(0);
   });
 });
 
 class FakeBrowserPage implements BrowserPage {
   public readonly evaluations: string[] = [];
   public readonly centerClickSelectors: string[] = [];
+  public pressKeyCount = 0;
+  private fullscreen = false;
+
+  public bringToFront(): Promise<void> {
+    return Promise.resolve();
+  }
 
   public clickByText(): Promise<boolean> {
     return Promise.resolve(false);
@@ -45,6 +70,7 @@ class FakeBrowserPage implements BrowserPage {
 
   public clickCenterFirst(selectors: string[]): Promise<boolean> {
     this.centerClickSelectors.push(...selectors);
+    this.fullscreen = true;
     return Promise.resolve(true);
   }
 
@@ -58,13 +84,18 @@ class FakeBrowserPage implements BrowserPage {
 
   public evaluate<T>(expression: string): Promise<T> {
     this.evaluations.push(expression);
+    if (expression.includes("caretv-youtube-full-window")) {
+      this.fullscreen = true;
+    }
     if (expression.includes("ytp-fullscreen")) {
-      return Promise.resolve(false as T);
+      return Promise.resolve(this.fullscreen as T);
     }
     return Promise.resolve(undefined as T);
   }
 
   public pressKey(): Promise<void> {
+    this.pressKeyCount += 1;
+    this.fullscreen = !this.fullscreen;
     return Promise.resolve();
   }
 

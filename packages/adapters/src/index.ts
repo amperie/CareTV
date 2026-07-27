@@ -8,7 +8,13 @@ export type {
 export { FakeStreamingAdapter, fakeFixtureHtml } from "./fakeAdapter.js";
 export { LocalFileAdapter } from "./localFileAdapter.js";
 export type { LocalFileAdapterOptions } from "./localFileAdapter.js";
-export { browserPageClosedCode, isBrowserPageClosedError } from "./browserPage.js";
+export {
+  browserPageClosedCode,
+  closeLoginBrowsers,
+  isBrowserPageClosedError,
+  openLoginBrowser
+} from "./browserPage.js";
+export type { LoginBrowserService } from "./browserPage.js";
 export { PrimeVideoAdapter } from "./primeVideoAdapter.js";
 export type { PrimeVideoAdapterOptions } from "./primeVideoAdapter.js";
 export { YouTubeVideoAdapter } from "./youtubeVideoAdapter.js";

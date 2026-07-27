@@ -202,9 +202,11 @@ class ChromeLocalPlayerBrowser {
   public async open(localPath: string): Promise<PlayerPage> {
     await this.ensureBrowser();
     const playerUrl = await this.playerUrl(localPath);
-    const target = await singlePageTarget(this.port(), playerUrl);
+    await closePageTargets(this.port());
+    const target = await createTarget(this.port(), playerUrl);
     const page = await CdpPlayerPage.connect(target.webSocketDebuggerUrl);
     await page.navigate(playerUrl);
+    await page.bringToFront();
     await page.waitForReady();
     return page;
   }
@@ -315,6 +317,10 @@ class CdpPlayerPage implements PlayerPage {
     await this.send("Page.navigate", { url });
   }
 
+  public async bringToFront(): Promise<void> {
+    await this.send("Page.bringToFront", {});
+  }
+
   public async waitForReady(timeoutMs = 10_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
 
@@ -414,30 +420,27 @@ interface ChromeTarget {
   webSocketDebuggerUrl: string;
 }
 
-async function singlePageTarget(port: number, url: string): Promise<ChromeTarget> {
-  const existing = await firstPageTarget(port);
-
-  if (existing) {
-    await fetch(`http://127.0.0.1:${port}/json/activate/${existing.id}`).catch(() => undefined);
-    return existing;
-  }
-
-  return createTarget(port, url);
-}
-
-async function firstPageTarget(port: number): Promise<ChromeTarget | undefined> {
+async function pageTargets(port: number): Promise<ChromeTarget[]> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`);
 
     if (!response.ok) {
-      return undefined;
+      return [];
     }
 
     const targets = (await response.json()) as ChromeTarget[];
-    return targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+    return targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl);
   } catch {
-    return undefined;
+    return [];
   }
+}
+
+async function closePageTargets(port: number): Promise<void> {
+  await Promise.all(
+    (await pageTargets(port)).map((target) =>
+      fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined)
+    )
+  );
 }
 
 async function createTarget(port: number, url: string): Promise<ChromeTarget> {

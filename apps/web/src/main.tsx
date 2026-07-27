@@ -4,6 +4,8 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const apiBase = `http://${window.location.hostname}:4010/api/v1`;
+const mediaCacheKey = "caretv.media";
+const playlistCacheKey = "caretv.playlists";
 
 interface MediaItem {
   id: string;
@@ -49,29 +51,39 @@ type DashboardTab = "main" | "media" | "events";
 
 function App() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("main");
-  const [durationSeconds, setDurationSeconds] = useState(12);
   const [editingPlaylistId, setEditingPlaylistId] = useState<string>();
-  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [media, setMedia] = useState<MediaItem[]>(() => loadCachedArray<MediaItem>(mediaCacheKey));
   const [mediaSearch, setMediaSearch] = useState("");
   const [playlistMediaIds, setPlaylistMediaIds] = useState<string[]>([]);
   const [playlistName, setPlaylistName] = useState("New playlist");
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlists, setPlaylists] = useState<Playlist[]>(() =>
+    loadCachedArray<Playlist>(playlistCacheKey)
+  );
   const [queueMessage, setQueueMessage] = useState("");
-  const [scenario, setScenario] = useState("normal");
   const [status, setStatus] = useState<PlaybackStatus>();
   const [streamingUrl, setStreamingUrl] = useState("");
-  const [title, setTitle] = useState("Fake movie");
   const [uploading, setUploading] = useState(false);
 
   async function refresh() {
-    const [mediaResponse, playlistsResponse, statusResponse] = await Promise.all([
-      fetch(`${apiBase}/media`, { cache: "no-store" }),
-      fetch(`${apiBase}/playlists`, { cache: "no-store" }),
-      fetch(`${apiBase}/playback/status`, { cache: "no-store" })
+    const [mediaItems, playlistItems, playbackStatus] = await Promise.all([
+      getJson<MediaItem[]>("/media"),
+      getJson<Playlist[]>("/playlists"),
+      getJson<PlaybackStatus>("/playback/status")
     ]);
-    setMedia((await mediaResponse.json()) as MediaItem[]);
-    setPlaylists((await playlistsResponse.json()) as Playlist[]);
-    setStatus((await statusResponse.json()) as PlaybackStatus);
+
+    if (Array.isArray(mediaItems)) {
+      setMedia(mediaItems);
+      saveCachedArray(mediaCacheKey, mediaItems);
+    }
+
+    if (Array.isArray(playlistItems)) {
+      setPlaylists(playlistItems);
+      saveCachedArray(playlistCacheKey, playlistItems);
+    }
+
+    if (playbackStatus) {
+      setStatus(playbackStatus);
+    }
   }
 
   useEffect(() => {
@@ -112,12 +124,6 @@ function App() {
       ? Math.min(100, Math.round((state.positionSeconds / state.durationSeconds) * 100))
       : 0;
 
-  async function addFakeItem() {
-    setQueueMessage("");
-    await post("/fake-queue", { title, scenario, durationSeconds });
-    await refresh();
-  }
-
   async function addStreamingItem() {
     setQueueMessage("");
     const path = streamingQueuePath(streamingUrl);
@@ -136,6 +142,17 @@ function App() {
     await refresh();
   }
 
+  async function openLogin(service: "prime" | "youtube") {
+    setQueueMessage("");
+    try {
+      await post(`/login/${service}`, {});
+      setQueueMessage(`Opened ${serviceLabel(service)} login on the appliance.`);
+    } catch {
+      setQueueMessage(`Could not open ${serviceLabel(service)} login.`);
+    }
+    await refresh();
+  }
+
   async function uploadMedia(file: File | undefined) {
     if (!file) return;
     setUploading(true);
@@ -147,6 +164,8 @@ function App() {
         method: "POST"
       });
       await refresh();
+    } catch {
+      setQueueMessage("Upload failed.");
     } finally {
       setUploading(false);
     }
@@ -154,7 +173,12 @@ function App() {
 
   async function enqueueMedia(mediaItemId: string) {
     setQueueMessage("");
-    await post("/queue", { mediaItemId });
+    try {
+      await post("/queue", { mediaItemId });
+      setQueueMessage("Item added to queue.");
+    } catch {
+      setQueueMessage("That item could not be queued.");
+    }
     await refresh();
   }
 
@@ -184,6 +208,7 @@ function App() {
         await post("/playlists", body);
       }
       clearPlaylistBuilder();
+      setQueueMessage("Playlist saved.");
     } catch {
       setQueueMessage("Playlist could not be saved.");
     }
@@ -194,6 +219,7 @@ function App() {
     setQueueMessage("");
     try {
       await post(`/playlists/${id}/queue`, {});
+      setQueueMessage("Playlist added to queue.");
     } catch {
       setQueueMessage("That playlist has no available media.");
     }
@@ -202,8 +228,13 @@ function App() {
 
   async function deletePlaylist(id: string) {
     setQueueMessage("");
-    await request(`/playlists/${id}`, { method: "DELETE" });
-    if (editingPlaylistId === id) clearPlaylistBuilder();
+    try {
+      await request(`/playlists/${id}`, { method: "DELETE" });
+      if (editingPlaylistId === id) clearPlaylistBuilder();
+      setQueueMessage("Playlist deleted.");
+    } catch {
+      setQueueMessage("Playlist could not be deleted.");
+    }
     await refresh();
   }
 
@@ -230,34 +261,68 @@ function App() {
   }
 
   async function startPlayback() {
-    await post("/playback/start", {});
+    setQueueMessage("");
+    try {
+      await post("/playback/start", {});
+      setQueueMessage("Playback start requested.");
+    } catch {
+      setQueueMessage("Playback could not be started.");
+    }
     await refresh();
   }
 
   async function stopPlayback() {
-    await post("/playback/stop", {});
+    setQueueMessage("");
+    try {
+      await post("/playback/stop", {});
+      setQueueMessage("Playback stop requested.");
+    } catch {
+      setQueueMessage("Playback could not be stopped.");
+    }
     await refresh();
   }
 
   async function resetLab() {
     setQueueMessage("");
-    await post("/lab/reset", {});
+    try {
+      await post("/lab/reset", {});
+      setQueueMessage("Playback state and queue were reset.");
+    } catch {
+      setQueueMessage("Reset failed.");
+    }
     await refresh();
   }
 
   async function sendCommand(type: "pause" | "restart" | "resume" | "skip") {
-    await post("/commands", { type });
+    setQueueMessage("");
+    try {
+      await post("/commands", { type });
+      setQueueMessage(`${commandLabel(type)} requested.`);
+    } catch {
+      setQueueMessage(`Could not send ${commandLabel(type).toLowerCase()}.`);
+    }
     await refresh();
   }
 
   async function toggleLoop() {
-    await post("/playback/loop", { enabled: !status?.loopEnabled });
+    setQueueMessage("");
+    try {
+      await post("/playback/loop", { enabled: !status?.loopEnabled });
+      setQueueMessage(`Loop ${status?.loopEnabled ? "disabled" : "enabled"}.`);
+    } catch {
+      setQueueMessage("Loop setting could not be changed.");
+    }
     await refresh();
   }
 
   async function removeQueueEntry(id: string) {
     setQueueMessage("");
-    await request(`/queue/${id}`, { method: "DELETE" });
+    try {
+      await request(`/queue/${id}`, { method: "DELETE" });
+      setQueueMessage("Queued item removed.");
+    } catch {
+      setQueueMessage("That queued item could not be removed.");
+    }
     await refresh();
   }
 
@@ -265,6 +330,7 @@ function App() {
     setQueueMessage("");
     try {
       await post(`/queue/${id}/play`, {});
+      setQueueMessage("Selected item will play next.");
     } catch {
       setQueueMessage("That item cannot be played right now.");
     }
@@ -277,6 +343,7 @@ function App() {
     try {
       await post(`/queue/${id}/move`, { direction });
       setStatus((current) => (current ? moveQueueInStatus(current, id, direction) : current));
+      setQueueMessage("Queue reordered.");
       await refresh();
     } catch {
       setQueueMessage("That item is no longer movable. Stop playback, then reorder queued items.");
@@ -286,7 +353,12 @@ function App() {
 
   async function clearCompleted() {
     setQueueMessage("");
-    await post("/queue/clear-completed", {});
+    try {
+      await post("/queue/clear-completed", {});
+      setQueueMessage("Completed, failed, skipped, and cancelled items were cleared.");
+    } catch {
+      setQueueMessage("Completed items could not be cleared.");
+    }
     await refresh();
   }
 
@@ -316,16 +388,6 @@ function App() {
 
       {activeTab === "main" ? (
         <section className="layout">
-          <FakeControls
-            durationSeconds={durationSeconds}
-            scenario={scenario}
-            title={title}
-            onAdd={() => void addFakeItem()}
-            onDurationChange={setDurationSeconds}
-            onReset={() => void resetLab()}
-            onScenarioChange={setScenario}
-            onTitleChange={setTitle}
-          />
           <OutputPanel
             progress={progress}
             state={state}
@@ -344,10 +406,12 @@ function App() {
             onMove={(id, direction) => void moveQueueEntry(id, direction)}
             onPlay={(id) => void playQueueEntry(id)}
             onRemove={(id) => void removeQueueEntry(id)}
+            onReset={() => void resetLab()}
           />
         </section>
       ) : activeTab === "media" ? (
         <section className="media-layout">
+          {queueMessage ? <p className="queue-message media-message">{queueMessage}</p> : null}
           <MediaPanel
             discoveredMedia={discoveredMedia}
             mediaSearch={mediaSearch}
@@ -362,6 +426,7 @@ function App() {
           <StreamingPanel
             streamingUrl={streamingUrl}
             onAdd={() => void addStreamingItem()}
+            onLogin={(service) => void openLogin(service)}
             onUrlChange={setStreamingUrl}
           />
           <PlaylistBuilder
@@ -376,64 +441,28 @@ function App() {
           />
           <PlaylistList
             mediaById={mediaById}
-            message={queueMessage}
+            message=""
             playlists={playlists}
             onDelete={(id) => void deletePlaylist(id)}
             onEdit={editPlaylist}
             onQueue={(id) => void queuePlaylist(id)}
+          />
+          <QueuePanel
+            mediaById={mediaById}
+            message={queueMessage}
+            queuedIds={queuedIds}
+            status={status}
+            onClearCompleted={() => void clearCompleted()}
+            onMove={(id, direction) => void moveQueueEntry(id, direction)}
+            onPlay={(id) => void playQueueEntry(id)}
+            onRemove={(id) => void removeQueueEntry(id)}
+            onReset={() => void resetLab()}
           />
         </section>
       ) : (
         <EventsPanel status={status} />
       )}
     </main>
-  );
-}
-
-function FakeControls(props: {
-  durationSeconds: number;
-  scenario: string;
-  title: string;
-  onAdd: () => void;
-  onDurationChange: (value: number) => void;
-  onReset: () => void;
-  onScenarioChange: (value: string) => void;
-  onTitleChange: (value: string) => void;
-}) {
-  return (
-    <div className="panel controls">
-      <h2>Add fake item</h2>
-      <label>
-        Title
-        <input value={props.title} onChange={(event) => props.onTitleChange(event.target.value)} />
-      </label>
-      <label>
-        Duration
-        <input
-          min="3"
-          type="number"
-          value={props.durationSeconds}
-          onChange={(event) => props.onDurationChange(Number(event.target.value))}
-        />
-      </label>
-      <label>
-        Scenario
-        <select
-          value={props.scenario}
-          onChange={(event) => props.onScenarioChange(event.target.value)}
-        >
-          <option value="normal">Normal</option>
-          <option value="buffering">Buffering</option>
-          <option value="interrupt-then-recover">Interrupt then recover</option>
-          <option value="login-required">Login required</option>
-          <option value="playback-failure">Playback failure</option>
-        </select>
-      </label>
-      <button onClick={() => props.onAdd()}>Add to queue</button>
-      <button className="secondary" onClick={() => props.onReset()}>
-        Reset lab
-      </button>
-    </div>
   );
 }
 
@@ -500,14 +529,20 @@ function QueuePanel(props: {
   onMove: (id: string, direction: "up" | "down") => void;
   onPlay: (id: string) => void;
   onRemove: (id: string) => void;
+  onReset: () => void;
 }) {
   return (
     <div className="panel queue">
       <div className="section-header">
-        <h2>Queue</h2>
-        <button className="compact secondary" onClick={() => props.onClearCompleted()}>
-          Clear done
-        </button>
+        <h2>Queue {props.status?.queue.length ? `(${props.status.queue.length})` : ""}</h2>
+        <div className="header-actions">
+          <button className="compact secondary" onClick={() => props.onClearCompleted()}>
+            Clear done
+          </button>
+          <button className="compact danger" onClick={() => props.onReset()}>
+            Reset lab
+          </button>
+        </div>
       </div>
       {props.message ? <p className="queue-message">{props.message}</p> : null}
       <div className="rows">
@@ -687,6 +722,7 @@ function MediaPanel(props: {
 function StreamingPanel(props: {
   streamingUrl: string;
   onAdd: () => void;
+  onLogin: (service: "prime" | "youtube") => void;
   onUrlChange: (value: string) => void;
 }) {
   return (
@@ -701,6 +737,14 @@ function StreamingPanel(props: {
         />
       </label>
       <button onClick={() => props.onAdd()}>Add to queue</button>
+      <div className="button-row compact-row">
+        <button className="secondary" onClick={() => props.onLogin("youtube")}>
+          YouTube login
+        </button>
+        <button className="secondary" onClick={() => props.onLogin("prime")}>
+          Prime login
+        </button>
+      </div>
     </div>
   );
 }
@@ -824,6 +868,33 @@ async function request(path: string, init: RequestInit) {
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
 }
 
+async function getJson<T>(path: string): Promise<T | undefined> {
+  try {
+    const response = await fetch(`${apiBase}${path}`, { cache: "no-store" });
+    return response.ok ? ((await response.json()) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function loadCachedArray<T>(key: string): T[] {
+  try {
+    const value = window.localStorage.getItem(key);
+    const parsed = value ? (JSON.parse(value) as unknown) : undefined;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedArray<T>(key: string, values: T[]): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(values));
+  } catch {
+    return;
+  }
+}
+
 function tabLabel(tab: DashboardTab): string {
   return tab[0]!.toUpperCase() + tab.slice(1);
 }
@@ -862,6 +933,23 @@ function streamingQueuePath(input: string): "/prime-queue" | "/youtube-queue" | 
 
 function mediaSourceLabel(item: MediaItem): string {
   return item.service === "local" ? (item.localPath ?? uploadStatus(item)) : item.service;
+}
+
+function serviceLabel(service: "prime" | "youtube"): string {
+  return service === "prime" ? "Prime" : "YouTube";
+}
+
+function commandLabel(type: "pause" | "restart" | "resume" | "skip"): string {
+  switch (type) {
+    case "pause":
+      return "Pause";
+    case "restart":
+      return "Rewind";
+    case "resume":
+      return "Resume";
+    case "skip":
+      return "Skip";
+  }
 }
 
 function playlistSummary(playlist: Playlist, mediaById: Map<string, MediaItem>): string {

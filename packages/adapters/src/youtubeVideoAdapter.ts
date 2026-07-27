@@ -112,12 +112,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
       5_000
     );
 
-    await page.evaluate<void>(`(() => {
-      document.querySelector(".html5-video-player")?.focus?.();
-      document.querySelector("${youtubeSelectors.video}")?.focus?.();
-    })()`);
-    await page.pressKey("f");
-    await wait(500);
+    await forceYouTubeViewport(page);
 
     if (await youtubeFullscreen(page)) {
       return;
@@ -126,6 +121,17 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     if (await page.clickCenterFirst(youtubeSelectors.fullscreenButton)) {
       await wait(500);
     }
+
+    if (await youtubeFullscreen(page)) {
+      return;
+    }
+
+    await page.evaluate<void>(`(() => {
+      document.querySelector(".html5-video-player")?.focus?.();
+      document.querySelector("${youtubeSelectors.video}")?.focus?.();
+    })()`);
+    await page.pressKey("f");
+    await wait(500);
 
     if (await youtubeFullscreen(page)) {
       return;
@@ -287,10 +293,57 @@ function youtubeFullscreen(page: BrowserPage): Promise<boolean> {
   return page.evaluate<boolean>(`(() => {
     const video = document.querySelector("${youtubeSelectors.video}");
     const player = document.querySelector(".html5-video-player");
+    const rect = (player ?? video)?.getBoundingClientRect?.();
+    const fillsViewport = Boolean(
+      rect &&
+      rect.width >= window.innerWidth * 0.9 &&
+      rect.height >= window.innerHeight * 0.9
+    );
     return Boolean(
+      fillsViewport ||
       player?.classList.contains("ytp-fullscreen") ||
       (document.fullscreenElement &&
         (document.fullscreenElement === video || document.fullscreenElement === player))
     );
+  })()`);
+}
+
+function forceYouTubeViewport(page: BrowserPage): Promise<void> {
+  return page.evaluate<void>(`(() => {
+    if (document.getElementById("caretv-youtube-full-window")) return;
+
+    const style = document.createElement("style");
+    style.id = "caretv-youtube-full-window";
+    style.textContent = \`
+      html, body {
+        background: #000 !important;
+        margin: 0 !important;
+        overflow: hidden !important;
+      }
+      #movie_player,
+      .html5-video-player,
+      ytd-player,
+      #player,
+      #player-container,
+      #player-container-inner {
+        background: #000 !important;
+        height: 100vh !important;
+        inset: 0 !important;
+        max-height: none !important;
+        max-width: none !important;
+        position: fixed !important;
+        width: 100vw !important;
+        z-index: 2147483647 !important;
+      }
+      ${youtubeSelectors.video} {
+        height: 100vh !important;
+        left: 0 !important;
+        object-fit: contain !important;
+        position: fixed !important;
+        top: 0 !important;
+        width: 100vw !important;
+      }
+    \`;
+    document.documentElement.appendChild(style);
   })()`);
 }

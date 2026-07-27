@@ -480,11 +480,8 @@ app.post("/api/v1/lab/reset", () => {
     DELETE FROM playback_commands;
     DELETE FROM playback_sessions;
     DELETE FROM queue_entries;
-    DELETE FROM playlist_items;
-    DELETE FROM playlists;
     DELETE FROM media_deletions;
     DELETE FROM media_downloads;
-    DELETE FROM media_items;
   `);
   return { reset: true, ...status };
 });
@@ -507,6 +504,20 @@ app.post("/api/v1/commands", (request, reply) => {
 
   const command = createCommand(type, active.mediaItemId);
 
+  commands.create(command);
+  reply.code(201);
+  return command;
+});
+
+app.post("/api/v1/login/:service", (request, reply) => {
+  const service = routeParam(request.params, "service");
+
+  if (service !== "youtube" && service !== "prime") {
+    reply.code(400);
+    return { error: "unsupported-login-service" };
+  }
+
+  const command = createCommand(service === "youtube" ? "login-youtube" : "login-prime");
   commands.create(command);
   reply.code(201);
   return command;

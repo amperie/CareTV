@@ -62,7 +62,9 @@ export type PlaybackCommandType =
   | "play-now"
   | "reload"
   | "restart-browser"
-  | "restart-agent";
+  | "restart-agent"
+  | "login-youtube"
+  | "login-prime";
 
 export type PlaybackCommandStatus = "pending" | "accepted" | "completed" | "failed";
 
