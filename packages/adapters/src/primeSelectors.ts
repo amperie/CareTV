@@ -22,7 +22,17 @@ export const primeSelectors = {
     "[aria-label*='Fullscreen' i]",
     "[data-testid*='fullscreen' i]"
   ],
-  playButton: ["[aria-label*='Resume' i]", "[aria-label*='Play' i]", "[data-testid*='play' i]"],
+  playButton: [
+    "[aria-label*='Resume' i]",
+    "[aria-label*='Play' i]",
+    "[aria-label*='Watch' i]",
+    "[title*='Resume' i]",
+    "[title*='Play' i]",
+    "[title*='Watch' i]",
+    "[data-testid*='play' i]",
+    "[data-automation-id*='play' i]",
+    "a[href*='play']"
+  ],
   video: "video"
 };
 

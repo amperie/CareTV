@@ -60,7 +60,13 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     const page = (session.page ??= await this.openPage(primeUrlFor(context.mediaItem)));
     await page.waitForSelector([primeSelectors.video, ...primeSelectors.playButton]);
     await page.clickFirst(primeSelectors.playButton);
-    await page.clickByText(["play", "resume", "continue watching"]);
+    await page.clickByText([
+      "watch from beginning",
+      "play",
+      "resume",
+      "watch now",
+      "continue watching"
+    ]);
     await page.evaluate<void>(`(() => {
       const video = document.querySelector("${primeSelectors.video}");
       if (video) return video.play().catch(() => undefined);
@@ -141,7 +147,7 @@ export class PrimeVideoAdapter implements StreamingAdapter {
       return false;
     }
 
-    return page.clickByText(["continue watching", "not now"]);
+    return page.clickByText(["continue watching", "watch now", "not now"]);
   }
 
   public async recover(context: AdapterContext, attempt: number): Promise<RecoveryResult> {

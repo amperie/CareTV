@@ -260,8 +260,13 @@ class CdpBrowserPage implements BrowserPage {
   public async clickByText(text: string[]): Promise<boolean> {
     return this.evaluate<boolean>(`(() => {
       const needles = ${JSON.stringify(text)}.map((value) => value.toLowerCase());
-      for (const element of Array.from(document.querySelectorAll("button, [role='button']"))) {
-        const label = (element.getAttribute("aria-label") || element.textContent || "").toLowerCase();
+      const selector = "button, a, [role='button'], [aria-label], [title]";
+      for (const element of Array.from(document.querySelectorAll(selector))) {
+        const label = [
+          element.getAttribute("aria-label"),
+          element.getAttribute("title"),
+          element.textContent
+        ].filter(Boolean).join(" ").toLowerCase();
         if (element instanceof HTMLElement && needles.some((needle) => label.includes(needle))) {
           element.click();
           return true;
