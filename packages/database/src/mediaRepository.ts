@@ -121,6 +121,16 @@ export class MediaRepository {
     return row ? mapMediaRow(row) : undefined;
   }
 
+  public getByServiceUrl(service: MediaItem["service"], url: string): MediaItem | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM media_items WHERE service = ? AND url = ? AND deleted_at IS NULL LIMIT 1"
+      )
+      .get(service, url) as unknown as MediaRow | undefined;
+
+    return row ? mapMediaRow(row) : undefined;
+  }
+
   public deletedLocalPathExists(localPath: string): boolean {
     const row = this.db
       .prepare(

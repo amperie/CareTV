@@ -38,6 +38,7 @@ export interface StreamingAdapter {
   prepare(context: AdapterContext): Promise<void>;
   start(context: AdapterContext): Promise<void>;
   pause(context: AdapterContext): Promise<void>;
+  restart(context: AdapterContext): Promise<void>;
   resume(context: AdapterContext): Promise<void>;
   stop(context: AdapterContext): Promise<void>;
   enterFullscreen(context: AdapterContext): Promise<void>;

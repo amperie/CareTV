@@ -226,7 +226,7 @@ const allowedTransitions: Record<PlaybackPhase, ReadonlySet<PlaybackStateEvent["
     "STOPPED",
     "HEARTBEAT"
   ]),
-  paused: new Set(["PAUSED", "RESUMED", "FAILED", "STOPPED", "HEARTBEAT"]),
+  paused: new Set(["PAUSED", "RESUMED", "RECOVERING", "FAILED", "STOPPED", "HEARTBEAT"]),
   buffering: new Set(["BUFFERING", "PLAYING", "RECOVERING", "FAILED", "STOPPED", "HEARTBEAT"]),
   ending: new Set(["COMPLETED", "FAILED", "STOPPED", "HEARTBEAT"]),
   recovering: new Set(["PLAYING", "FAILED", "STOPPED", "HEARTBEAT"]),

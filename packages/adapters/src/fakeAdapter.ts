@@ -68,6 +68,14 @@ export class FakeStreamingAdapter implements StreamingAdapter {
     return Promise.resolve();
   }
 
+  public restart(context: AdapterContext): Promise<void> {
+    const session = this.session(context);
+    session.startedAtMs = context.now().getTime();
+    session.stopped = false;
+    delete session.pausedAtMs;
+    return Promise.resolve();
+  }
+
   public resume(context: AdapterContext): Promise<void> {
     const session = this.session(context);
 

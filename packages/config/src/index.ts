@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { z } from "zod";
@@ -6,13 +7,14 @@ import { z } from "zod";
 const portSchema = z.coerce.number().int().min(1).max(65535);
 const millisecondsSchema = z.coerce.number().int().min(100);
 const configFilename = "caretv.config.json";
+const defaultDataDir = defaultCareTvDataDir();
 
 const envSchema = z.object({
   CARETV_HOST: z.string().min(1).default("127.0.0.1"),
   CARETV_SERVER_PORT: portSchema.default(4010),
   CARETV_WEB_PORT: portSchema.default(4020),
-  CARETV_RUNTIME_DIR: z.string().min(1).default(".caretv/runtime"),
-  CARETV_CHROME_PROFILE_DIR: z.string().min(1).default(".caretv/chrome-profile"),
+  CARETV_RUNTIME_DIR: z.string().min(1).default(resolve(defaultDataDir, "runtime")),
+  CARETV_CHROME_PROFILE_DIR: z.string().min(1).default(resolve(defaultDataDir, "chrome-profile")),
   CARETV_TIMEZONE: z.string().min(1).default("America/Los_Angeles"),
   CARETV_APPLIANCE_ID: z.string().min(1).default("local-appliance"),
   CARETV_APPLIANCE_NAME: z.string().min(1).default("Local Appliance"),
@@ -20,7 +22,7 @@ const envSchema = z.object({
   CARETV_APPLIANCE_HEARTBEAT_MS: millisecondsSchema.default(5000),
   CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS: millisecondsSchema.default(1000),
   CARETV_APPLIANCE_REQUEST_TIMEOUT_MS: millisecondsSchema.default(10000),
-  CARETV_APPLIANCE_MEDIA_DIR: z.string().min(1).default(".caretv/media"),
+  CARETV_APPLIANCE_MEDIA_DIR: z.string().min(1).default(resolve(defaultDataDir, "media")),
   CARETV_APPLIANCE_MEDIA_SCAN_MS: millisecondsSchema.default(30000),
   CARETV_SERVER_URL: z.string().url().default("http://127.0.0.1:4010"),
   CARETV_AUTH_TOKEN: z.string().min(16).optional()
@@ -200,4 +202,16 @@ function toEnvConfig(config: Partial<CareTvConfig>): Record<string, unknown> {
 
 function withoutUndefined(config: FileConfig): Record<string, unknown> {
   return Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined));
+}
+
+function defaultCareTvDataDir(): string {
+  if (process.platform === "win32") {
+    return resolve(process.env.LOCALAPPDATA ?? process.env.APPDATA ?? homedir(), "CareTV");
+  }
+
+  if (process.platform === "darwin") {
+    return resolve(homedir(), "Library", "Application Support", "CareTV");
+  }
+
+  return resolve(process.env.XDG_DATA_HOME ?? resolve(homedir(), ".local", "share"), "caretv");
 }

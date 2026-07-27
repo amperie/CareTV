@@ -75,6 +75,22 @@ describe("fake streaming adapter", () => {
     expect(await adapter.recover(context, 2)).toMatchObject({ recovered: true });
   });
 
+  it("restarts playback from the beginning", async () => {
+    const clock = new TestClock();
+    const adapter = new FakeStreamingAdapter();
+    const context = fakeContext(clock, fakeMedia({ durationSeconds: 10 }));
+
+    await adapter.prepare(context);
+    await adapter.start(context);
+    clock.advanceSeconds(6);
+    await adapter.restart(context);
+
+    expect(await adapter.observe(context)).toMatchObject({
+      status: "playing",
+      positionSeconds: 0
+    });
+  });
+
   it("exposes a browser fixture page", () => {
     expect(fakeFixtureHtml).toContain("CareTV Fake Adapter Fixture");
     expect(fakeFixtureHtml).toContain("<video");

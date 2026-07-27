@@ -68,9 +68,8 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     await this.dismissKnownInterruptions(context);
     await page.clickFirst(youtubeSelectors.playButton);
     await page.clickByText(["play"]);
-    await page.evaluate<void>(
-      `document.querySelector("${youtubeSelectors.video}")?.play().catch(() => undefined)`
-    );
+    await playFromStart(page);
+    await this.enterFullscreen(context);
   }
 
   public async pause(context: AdapterContext): Promise<void> {
@@ -79,11 +78,22 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     );
   }
 
+  public async restart(context: AdapterContext): Promise<void> {
+    await this.dismissKnownInterruptions(context);
+    const page = this.session(context).page;
+
+    if (page) {
+      await playFromStart(page);
+      await this.enterFullscreen(context);
+    }
+  }
+
   public async resume(context: AdapterContext): Promise<void> {
     await this.dismissKnownInterruptions(context);
     await this.session(context).page?.evaluate<void>(
       `document.querySelector("${youtubeSelectors.video}")?.play().catch(() => undefined)`
     );
+    await this.enterFullscreen(context);
   }
 
   public async stop(context: AdapterContext): Promise<void> {
@@ -102,8 +112,31 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
       5_000
     );
 
+    await page.evaluate<void>(`(() => {
+      document.querySelector(".html5-video-player")?.focus?.();
+      document.querySelector("${youtubeSelectors.video}")?.focus?.();
+    })()`);
+    await page.pressKey("f");
+    await wait(500);
+
+    if (await youtubeFullscreen(page)) {
+      return;
+    }
+
+    if (await page.clickCenterFirst(youtubeSelectors.fullscreenButton)) {
+      await wait(500);
+    }
+
+    if (await youtubeFullscreen(page)) {
+      return;
+    }
+
     if (await page.clickFirst(youtubeSelectors.fullscreenButton)) {
       await wait(500);
+    }
+
+    if (await youtubeFullscreen(page)) {
+      return;
     }
 
     await page.evaluate<void>(`(() => {
@@ -135,8 +168,9 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
         duration: Number.isFinite(video?.duration) ? video.duration : undefined,
         ended: video?.ended,
         fullscreen: Boolean(
-          document.fullscreenElement &&
-          (document.fullscreenElement === video || document.fullscreenElement === player)
+          player?.classList.contains("ytp-fullscreen") ||
+          (document.fullscreenElement &&
+            (document.fullscreenElement === video || document.fullscreenElement === player))
         ),
         hasVideo: Boolean(video),
         paused: video?.paused,
@@ -165,11 +199,18 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     return skippedAd || dismissed;
   }
 
-  public recover(): Promise<RecoveryResult> {
-    return Promise.resolve({
-      recovered: false,
-      message: "YouTube recovery is not implemented yet."
-    });
+  public async recover(context: AdapterContext, attempt: number): Promise<RecoveryResult> {
+    if (attempt > 3) {
+      return { recovered: false, message: "YouTube browser recovery limit reached." };
+    }
+
+    const session = this.session(context);
+    await session.page?.close().catch(() => undefined);
+    delete session.page;
+    await this.start(context);
+    await this.resume(context);
+    await this.enterFullscreen(context);
+    return { recovered: true, message: "YouTube browser relaunched." };
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
@@ -200,15 +241,18 @@ function isYouTubeUrl(input: string): boolean {
 
 function normalizeYouTubeUrl(input: string): string {
   const url = new URL(input);
+  const host = url.hostname.replace(/^www\./, "");
+  const id =
+    host === "youtu.be" ? url.pathname.split("/").filter(Boolean)[0] : url.searchParams.get("v");
 
-  if (url.hostname.replace(/^www\./, "") === "youtu.be") {
-    const id = url.pathname.split("/").filter(Boolean)[0];
-
-    if (id) {
-      return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
-    }
+  if (id) {
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
   }
 
+  url.hash = "";
+  url.searchParams.delete("t");
+  url.searchParams.delete("start");
+  url.searchParams.delete("time_continue");
   return url.href;
 }
 
@@ -228,4 +272,25 @@ function throwIfAborted(signal: AbortSignal): void {
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function playFromStart(page: BrowserPage): Promise<void> {
+  return page.evaluate<void>(`(() => {
+    const video = document.querySelector("${youtubeSelectors.video}");
+    if (!video) return;
+    video.currentTime = 0;
+    return video.play().catch(() => undefined);
+  })()`);
+}
+
+function youtubeFullscreen(page: BrowserPage): Promise<boolean> {
+  return page.evaluate<boolean>(`(() => {
+    const video = document.querySelector("${youtubeSelectors.video}");
+    const player = document.querySelector(".html5-video-player");
+    return Boolean(
+      player?.classList.contains("ytp-fullscreen") ||
+      (document.fullscreenElement &&
+        (document.fullscreenElement === video || document.fullscreenElement === player))
+    );
+  })()`);
 }

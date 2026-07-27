@@ -6,11 +6,15 @@ import { join } from "node:path";
 
 export interface BrowserPage {
   clickByText(text: string[]): Promise<boolean>;
+  clickCenterFirst(selectors: string[]): Promise<boolean>;
   clickFirst(selectors: string[]): Promise<boolean>;
   close(): Promise<void>;
   evaluate<T>(expression: string): Promise<T>;
+  pressKey(key: "f"): Promise<void>;
   waitForSelector(selectors: string[], timeoutMs?: number): Promise<boolean>;
 }
+
+export const browserPageClosedCode = "browser-page-closed";
 
 export interface ChromeBrowserOptions {
   chromePath?: string;
@@ -51,6 +55,9 @@ export class ChromeBrowser {
       "--kiosk",
       "about:blank"
     ]);
+    this.process.once("exit", () => {
+      this.process = undefined;
+    });
     this.process.unref();
     await waitForDebugPort(this.port());
   }
@@ -66,6 +73,7 @@ class CdpBrowserPage implements BrowserPage {
     number,
     { reject: (error: Error) => void; resolve: (value: unknown) => void }
   >();
+  private closed = false;
 
   private constructor(private readonly socket: WebSocketLike) {
     socket.addEventListener("message", (event: { data?: unknown }) => {
@@ -92,6 +100,8 @@ class CdpBrowserPage implements BrowserPage {
         pending.resolve(message.result?.result?.value);
       }
     });
+    socket.addEventListener("close", () => this.handleClose());
+    socket.addEventListener("error", () => this.handleClose());
   }
 
   public static async connect(webSocketUrl: string): Promise<CdpBrowserPage> {
@@ -128,6 +138,54 @@ class CdpBrowserPage implements BrowserPage {
       }
       return false;
     })()`);
+  }
+
+  public async clickCenterFirst(selectors: string[]): Promise<boolean> {
+    const point = await this.evaluate<{ x: number; y: number } | undefined>(`(() => {
+      for (const selector of ${JSON.stringify(selectors)}) {
+        let element;
+        try {
+          element = document.querySelector(selector);
+        } catch {
+          continue;
+        }
+
+        if (!(element instanceof HTMLElement)) continue;
+        const rect = element.getBoundingClientRect();
+        if (!rect.width || !rect.height) continue;
+        element.scrollIntoView({ block: "center", inline: "center" });
+        return {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2
+        };
+      }
+      return undefined;
+    })()`);
+
+    if (!point) {
+      return false;
+    }
+
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: point.x,
+      y: point.y
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      button: "left",
+      clickCount: 1,
+      type: "mousePressed",
+      x: point.x,
+      y: point.y
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      button: "left",
+      clickCount: 1,
+      type: "mouseReleased",
+      x: point.x,
+      y: point.y
+    });
+    return true;
   }
 
   public async waitForSelector(selectors: string[], timeoutMs = 10_000): Promise<boolean> {
@@ -175,6 +233,23 @@ class CdpBrowserPage implements BrowserPage {
     }) as Promise<T>;
   }
 
+  public async pressKey(key: "f"): Promise<void> {
+    const code = key.toUpperCase().charCodeAt(0);
+    await this.send("Input.dispatchKeyEvent", {
+      code: `Key${key.toUpperCase()}`,
+      key,
+      text: key,
+      type: "keyDown",
+      windowsVirtualKeyCode: code
+    });
+    await this.send("Input.dispatchKeyEvent", {
+      code: `Key${key.toUpperCase()}`,
+      key,
+      type: "keyUp",
+      windowsVirtualKeyCode: code
+    });
+  }
+
   private hasSelector(selectors: string[]): Promise<boolean> {
     return this.evaluate<boolean>(`(() => {
       for (const selector of ${JSON.stringify(selectors)}) {
@@ -189,19 +264,53 @@ class CdpBrowserPage implements BrowserPage {
   }
 
   private send(method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (this.closed) {
+      return Promise.reject(browserPageClosedError());
+    }
+
     const id = ++this.id;
     const message = JSON.stringify({ id, method, params });
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { reject, resolve });
-      this.socket.send(message);
+      try {
+        this.socket.send(message);
+      } catch {
+        this.pending.delete(id);
+        reject(browserPageClosedError());
+      }
     });
   }
+
+  private handleClose(): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.closed = true;
+    const error = browserPageClosedError();
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
+
+export function isBrowserPageClosedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes(browserPageClosedCode) ||
+      error.message.includes("WebSocket is not open"))
+  );
+}
+
+function browserPageClosedError(): Error {
+  return new Error(browserPageClosedCode);
 }
 
 interface WebSocketLike {
   addEventListener(
-    type: "open" | "message" | "error",
+    type: "open" | "message" | "error" | "close",
     listener: (event: { data?: unknown }) => void,
     options?: { once?: boolean }
   ): void;

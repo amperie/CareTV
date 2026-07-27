@@ -73,6 +73,15 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     );
   }
 
+  public async restart(context: AdapterContext): Promise<void> {
+    await this.session(context).page?.evaluate<void>(`(() => {
+      const video = document.querySelector("${primeSelectors.video}");
+      if (!video) return;
+      video.currentTime = 0;
+      return video.play().catch(() => undefined);
+    })()`);
+  }
+
   public async resume(context: AdapterContext): Promise<void> {
     await this.session(context).page?.evaluate<void>(
       `document.querySelector("${primeSelectors.video}")?.play().catch(() => undefined)`
@@ -135,8 +144,18 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     return page.clickByText(["continue watching", "not now"]);
   }
 
-  public recover(): Promise<RecoveryResult> {
-    return Promise.resolve({ recovered: false, message: "Prime recovery is not implemented yet." });
+  public async recover(context: AdapterContext, attempt: number): Promise<RecoveryResult> {
+    if (attempt > 3) {
+      return { recovered: false, message: "Prime browser recovery limit reached." };
+    }
+
+    const session = this.session(context);
+    await session.page?.close().catch(() => undefined);
+    delete session.page;
+    await this.start(context);
+    await this.resume(context);
+    await this.enterFullscreen(context);
+    return { recovered: true, message: "Prime browser relaunched." };
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {

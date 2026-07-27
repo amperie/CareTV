@@ -8,5 +8,6 @@ export type { MediaDownload } from "./mediaDownloadRepository.js";
 export { MediaDeletionRepository } from "./mediaDeletionRepository.js";
 export type { MediaDeletion } from "./mediaDeletionRepository.js";
 export { PlaybackEventRepository } from "./playbackEventRepository.js";
+export { PlaylistRepository, playlistItems } from "./playlistRepository.js";
 export { QueueRepository } from "./queueRepository.js";
 export { SettingsRepository } from "./settingsRepository.js";

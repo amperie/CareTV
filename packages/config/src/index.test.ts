@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -21,6 +21,22 @@ describe("config", () => {
       applianceMediaScanMs: 30000,
       timezone: "America/Los_Angeles"
     });
+    expect(config.values.runtimeDir.toLowerCase()).toContain("caretv");
+    expect(config.values.runtimeDir).toBe(resolve(config.values.runtimeDir));
+    expect(config.values.applianceMediaDir.toLowerCase()).toContain("caretv");
+    expect(config.values.applianceMediaDir).toBe(resolve(config.values.applianceMediaDir));
+  });
+
+  it("keeps explicit relative paths scoped to cwd", () => {
+    const config = loadConfig(
+      {
+        CARETV_RUNTIME_DIR: ".caretv/runtime",
+        CARETV_CHROME_PROFILE_DIR: ".caretv/chrome-profile",
+        CARETV_APPLIANCE_MEDIA_DIR: ".caretv/media"
+      },
+      { createDirectories: false, cwd: "C:\\CareTV" }
+    );
+
     expect(config.values.runtimeDir).toBe(normalizePath(".caretv/runtime", "C:\\CareTV"));
     expect(config.values.applianceMediaDir).toBe(normalizePath(".caretv/media", "C:\\CareTV"));
   });

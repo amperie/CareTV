@@ -13,6 +13,7 @@ import { MediaRepository } from "./mediaRepository.js";
 import { MediaDownloadRepository } from "./mediaDownloadRepository.js";
 import { MediaDeletionRepository } from "./mediaDeletionRepository.js";
 import { PlaybackEventRepository } from "./playbackEventRepository.js";
+import { PlaylistRepository, playlistItems } from "./playlistRepository.js";
 import { QueueRepository } from "./queueRepository.js";
 import { SettingsRepository } from "./settingsRepository.js";
 
@@ -30,6 +31,64 @@ describe("database repositories", () => {
       migrate(db);
       expect(new MediaRepository(db).get("media-1")?.title).toBe("Fake media-1");
       db.close();
+    });
+  });
+
+  it("persists playlists across reopen", () => {
+    withDatabase((filename) => {
+      let db = openDatabase(filename);
+      migrate(db);
+      const media = new MediaRepository(db);
+      const playlists = new PlaylistRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      media.create(fakeMedia("media-2"));
+      playlists.create({
+        id: "playlist-1",
+        name: "Morning",
+        items: playlistItems("playlist-1", ["media-1", "media-2"]),
+        createdAt: now,
+        updatedAt: now
+      });
+      db.close();
+
+      db = openDatabase(filename);
+      migrate(db);
+      expect(new PlaylistRepository(db).get("playlist-1")).toMatchObject({
+        name: "Morning",
+        items: [
+          { mediaItemId: "media-1", position: 1 },
+          { mediaItemId: "media-2", position: 2 }
+        ]
+      });
+      db.close();
+    });
+  });
+
+  it("updates playlist names and ordered items", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const playlists = new PlaylistRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      media.create(fakeMedia("media-2"));
+      media.create(fakeMedia("media-3"));
+      playlists.create({
+        id: "playlist-1",
+        name: "Old",
+        items: playlistItems("playlist-1", ["media-1"]),
+        createdAt: now,
+        updatedAt: now
+      });
+
+      expect(playlists.update("playlist-1", "Updated", ["media-3", "media-2"], now)).toBe(true);
+      expect(playlists.get("playlist-1")).toMatchObject({
+        name: "Updated",
+        items: [
+          { mediaItemId: "media-3", position: 1 },
+          { mediaItemId: "media-2", position: 2 }
+        ]
+      });
     });
   });
 
@@ -247,6 +306,30 @@ describe("database repositories", () => {
       expect(media.deletedLocalPathExists(localPath)).toBe(false);
       expect(media.softDeleteLocalPath(localPath, now)).toBe(1);
       expect(media.deletedLocalPathExists(localPath)).toBe(true);
+    });
+  });
+
+  it("finds active streaming media by service URL", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+
+      media.create({
+        ...fakeMedia("youtube-1"),
+        service: "youtube",
+        mediaType: "video",
+        url: "https://www.youtube.com/watch?v=abc123"
+      });
+
+      expect(
+        media.getByServiceUrl("youtube", "https://www.youtube.com/watch?v=abc123")
+      ).toMatchObject({
+        id: "youtube-1",
+        title: "Fake youtube-1"
+      });
+      media.softDelete("youtube-1", now);
+      expect(
+        media.getByServiceUrl("youtube", "https://www.youtube.com/watch?v=abc123")
+      ).toBeUndefined();
     });
   });
 

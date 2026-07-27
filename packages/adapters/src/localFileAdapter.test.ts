@@ -61,6 +61,13 @@ describe("local file adapter", () => {
       await adapter.resume(context);
       expect(await adapter.observe(context)).toMatchObject({ status: "playing" });
 
+      page.currentTime = 8;
+      await adapter.restart(context);
+      expect(await adapter.observe(context)).toMatchObject({
+        positionSeconds: 0,
+        status: "playing"
+      });
+
       await adapter.stop(context);
       expect(await adapter.observe(context)).toMatchObject({ status: "completed" });
 
@@ -77,6 +84,25 @@ describe("local file adapter", () => {
 
     await expect(adapter.prepare(context)).rejects.toThrow();
   });
+
+  it("fails when Chrome plays audio without decoded video frames", async () => {
+    await withMediaFile(async (localPath) => {
+      const page = new FakePlayerPage(10);
+      const adapter = new LocalFileAdapter({ openPlayer: () => Promise.resolve(page) });
+      const context = localContext(localMedia(localPath, 10));
+
+      await adapter.prepare(context);
+      await adapter.start(context);
+      page.currentTime = 3;
+      page.videoWidth = 0;
+      page.videoHeight = 0;
+
+      expect(await adapter.observe(context)).toMatchObject({
+        errorCode: "local-file-video-track-unavailable",
+        status: "error"
+      });
+    });
+  });
 });
 
 class FakePlayerPage implements PlayerPage {
@@ -85,6 +111,8 @@ class FakePlayerPage implements PlayerPage {
   public fullscreen = false;
   public paused = true;
   public playCount = 0;
+  public videoHeight = 720;
+  public videoWidth = 1280;
   private ended = false;
 
   public constructor(private readonly duration: number) {}
@@ -110,6 +138,13 @@ class FakePlayerPage implements PlayerPage {
     return Promise.resolve();
   }
 
+  public restart(): Promise<void> {
+    this.currentTime = 0;
+    this.ended = false;
+    this.paused = false;
+    return Promise.resolve();
+  }
+
   public state() {
     return Promise.resolve({
       currentTime: this.currentTime,
@@ -117,7 +152,9 @@ class FakePlayerPage implements PlayerPage {
       ended: this.ended,
       fullscreen: this.fullscreen,
       paused: this.paused,
-      readyState: 4
+      readyState: 4,
+      videoHeight: this.videoHeight,
+      videoWidth: this.videoWidth
     });
   }
 

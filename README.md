@@ -336,10 +336,10 @@ The supported file keys match the internal camel-case config names:
 - `appliancePollMs`: control/queue polling interval, default `1000`
 - `applianceHeartbeatMs`: idle heartbeat interval, default `5000`
 - `appliancePlaybackObserveMs`: playback observation/progress interval, default `1000`
-- `applianceMediaDir`: local media folder scanned by the appliance, default `.caretv/media`
+- `applianceMediaDir`: local media folder scanned by the appliance, default `<user data>/CareTV/media`
 - `applianceMediaScanMs`: local media scan interval, default `30000`
-- `runtimeDir`: runtime database/upload/log location, default `.caretv/runtime`
-- `chromeProfileDir`: persistent browser profile location, default `.caretv/chrome-profile`
+- `runtimeDir`: runtime database/upload/log location, default `<user data>/CareTV/runtime`
+- `chromeProfileDir`: persistent browser profile location, default `<user data>/CareTV/chrome-profile`
 
 Set `CARETV_CONFIG_FILE` only when the config file lives somewhere else. Environment variables still
 override file values for deployment overrides.

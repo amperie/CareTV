@@ -23,7 +23,7 @@ export const migrations = [
 
       CREATE TABLE IF NOT EXISTS queue_entries (
         id TEXT PRIMARY KEY,
-        media_item_id TEXT NOT NULL REFERENCES media_items(id),
+        media_item_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
         position INTEGER NOT NULL,
         status TEXT NOT NULL,
         priority INTEGER NOT NULL DEFAULT 0,
@@ -114,6 +114,27 @@ export const migrations = [
         completed_at TEXT,
         error_message TEXT
       );
+    `
+  },
+  {
+    id: 5,
+    sql: `
+      CREATE TABLE IF NOT EXISTS playlists (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS playlist_items (
+        playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        media_item_id TEXT NOT NULL REFERENCES media_items(id),
+        position INTEGER NOT NULL,
+        PRIMARY KEY (playlist_id, position)
+      );
+
+      CREATE INDEX IF NOT EXISTS playlist_items_media_item_idx
+        ON playlist_items(media_item_id);
     `
   }
 ] as const;

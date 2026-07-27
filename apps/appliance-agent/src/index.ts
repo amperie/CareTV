@@ -3,6 +3,7 @@ import { basename, extname, isAbsolute, join, relative, resolve } from "node:pat
 
 import {
   FakeStreamingAdapter,
+  isBrowserPageClosedError,
   LocalFileAdapter,
   PrimeVideoAdapter,
   YouTubeVideoAdapter
@@ -215,6 +216,8 @@ async function play(queueEntry: QueueEntry): Promise<void> {
     await apply({ type: "BROWSER_LAUNCHED" });
     await adapter.start(context);
     await adapter.enterFullscreen(context);
+    await adapter.resume(context);
+    await adapter.enterFullscreen(context);
     await apply({ type: "READY" });
 
     await monitor(queueEntry, mediaItem, adapter, context);
@@ -251,7 +254,12 @@ async function monitor(
       return commandResult;
     }
 
-    const observation = await streamingAdapter.observe(context);
+    const observation = await observeWithRecovery(queueEntry.id, streamingAdapter, context);
+
+    if (!observation) {
+      return "failed";
+    }
+
     const result = await applyObservation(queueEntry.id, streamingAdapter, context, observation);
     await heartbeat(true);
 
@@ -260,6 +268,32 @@ async function monitor(
     }
 
     await sleep(config.values.appliancePlaybackObserveMs);
+  }
+}
+
+async function observeWithRecovery(
+  queueEntryId: string,
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext
+): Promise<PlaybackObservation | undefined> {
+  try {
+    return await streamingAdapter.observe(context);
+  } catch (error) {
+    if (!isBrowserPageClosedError(error)) {
+      throw error;
+    }
+
+    const attempt = state.recoveryAttempt + 1;
+    await apply({ type: "RECOVERING", attempt });
+    const recovery = await streamingAdapter.recover(context, attempt);
+
+    if (!recovery.recovered) {
+      await fail(queueEntryId, "browser-recovery-failed", recovery.message);
+      return undefined;
+    }
+
+    await apply({ type: "PLAYING", positionSeconds: 0 });
+    return { status: "ready", positionSeconds: 0 };
   }
 }
 
@@ -292,6 +326,15 @@ async function applyCommands(
         await client.updateQueueStatus(queueEntryId, "playing");
         await client.updateCommand(command.id, "accepted");
         break;
+      case "restart":
+        await streamingAdapter.restart(context);
+        if (state.phase === "paused") {
+          await apply({ type: "RESUMED" });
+        }
+        await apply({ type: "PLAYING", positionSeconds: 0 });
+        await client.updateQueueStatus(queueEntryId, "playing");
+        await client.updateCommand(command.id, "accepted");
+        break;
       case "skip":
       case "stop":
         await streamingAdapter.stop(context);
@@ -319,6 +362,10 @@ async function applyObservation(
       await apply(positionEvent("HEARTBEAT", observation.positionSeconds));
       return undefined;
     case "playing":
+      if (observation.fullscreen === false) {
+        await streamingAdapter.enterFullscreen(context);
+      }
+
       await client.updateQueueStatus(queueEntryId, "playing");
       await apply({
         type: "PLAYING",
@@ -332,10 +379,23 @@ async function applyObservation(
       });
       return undefined;
     case "paused":
+      if (state.phase !== "paused") {
+        await streamingAdapter.resume(context);
+        if (observation.fullscreen === false) {
+          await streamingAdapter.enterFullscreen(context);
+        }
+        await apply(positionEvent("HEARTBEAT", observation.positionSeconds));
+        return undefined;
+      }
+
       await client.updateQueueStatus(queueEntryId, "paused");
       await apply(positionEvent("PAUSED", observation.positionSeconds));
       return undefined;
     case "buffering":
+      if (observation.fullscreen === false) {
+        await streamingAdapter.enterFullscreen(context);
+      }
+
       await apply({ type: "BUFFERING" });
       return undefined;
     case "blocked":
@@ -392,6 +452,8 @@ function canApplyCommand(command: PlaybackCommand, phase: PlaybackState["phase"]
       return phase === "playing" || phase === "buffering";
     case "resume":
       return phase === "paused";
+    case "restart":
+      return ["playing", "paused", "buffering"].includes(phase);
     case "skip":
     case "stop":
       return !["idle", "failed"].includes(phase);

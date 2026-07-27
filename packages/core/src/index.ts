@@ -38,6 +38,20 @@ export interface QueueEntry {
   lastErrorMessage?: string;
 }
 
+export interface PlaylistItem {
+  playlistId: string;
+  mediaItemId: string;
+  position: number;
+}
+
+export interface Playlist {
+  id: string;
+  name: string;
+  items: PlaylistItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type PlaybackCommandType =
   | "play"
   | "pause"

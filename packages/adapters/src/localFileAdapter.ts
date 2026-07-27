@@ -26,6 +26,8 @@ interface PlayerState {
   fullscreen: boolean;
   paused: boolean;
   readyState: number;
+  videoHeight: number;
+  videoWidth: number;
 }
 
 export interface PlayerPage {
@@ -33,6 +35,7 @@ export interface PlayerPage {
   enterFullscreen(): Promise<void>;
   pause(): Promise<void>;
   play(): Promise<void>;
+  restart(): Promise<void>;
   state(): Promise<PlayerState>;
   stop(): Promise<void>;
 }
@@ -84,6 +87,10 @@ export class LocalFileAdapter implements StreamingAdapter {
     await this.session(context).page?.pause();
   }
 
+  public async restart(context: AdapterContext): Promise<void> {
+    await this.session(context).page?.restart();
+  }
+
   public async resume(context: AdapterContext): Promise<void> {
     await this.session(context).page?.play();
   }
@@ -125,6 +132,18 @@ export class LocalFileAdapter implements StreamingAdapter {
       return observation("buffering", positionSeconds, durationSeconds, state.fullscreen);
     }
 
+    if (
+      !state.paused &&
+      positionSeconds >= 2 &&
+      (state.videoWidth === 0 || state.videoHeight === 0)
+    ) {
+      return {
+        status: "error",
+        errorCode: "local-file-video-track-unavailable",
+        details: { ...state }
+      };
+    }
+
     return observation(
       state.paused ? "paused" : "playing",
       positionSeconds,
@@ -137,11 +156,17 @@ export class LocalFileAdapter implements StreamingAdapter {
     return Promise.resolve(false);
   }
 
-  public recover(): Promise<RecoveryResult> {
-    return Promise.resolve({
-      recovered: false,
-      message: "Local file recovery is not implemented."
-    });
+  public async recover(context: AdapterContext, attempt: number): Promise<RecoveryResult> {
+    if (attempt > 3) {
+      return { recovered: false, message: "Local file browser recovery limit reached." };
+    }
+
+    const session = this.session(context);
+    await session.page?.close().catch(() => undefined);
+    delete session.page;
+    await this.start(context);
+    await this.enterFullscreen(context);
+    return { recovered: true, message: "Local file browser relaunched." };
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
@@ -189,6 +214,10 @@ class ChromeLocalPlayerBrowser {
       return;
     }
 
+    if (await isDebugPortReady(this.port())) {
+      return;
+    }
+
     const chromePath = this.options.chromePath ?? findChromePath();
     const userDataDir = this.options.userDataDir ?? join(tmpdir(), "caretv-chrome-profile");
     await mkdir(userDataDir, { recursive: true });
@@ -202,6 +231,9 @@ class ChromeLocalPlayerBrowser {
       "--kiosk",
       "about:blank"
     ]);
+    this.process.once("exit", () => {
+      this.process = undefined;
+    });
     this.process.unref();
     await waitForDebugPort(this.port());
   }
@@ -225,6 +257,7 @@ class CdpPlayerPage implements PlayerPage {
     number,
     { reject: (error: Error) => void; resolve: (value: unknown) => void }
   >();
+  private closed = false;
 
   private constructor(private readonly socket: WebSocketLike) {
     socket.addEventListener("message", (event: { data?: unknown }) => {
@@ -251,6 +284,8 @@ class CdpPlayerPage implements PlayerPage {
         pending.resolve(message.result?.result?.value);
       }
     });
+    socket.addEventListener("close", () => this.handleClose());
+    socket.addEventListener("error", () => this.handleClose());
   }
 
   public static async connect(webSocketUrl: string): Promise<CdpPlayerPage> {
@@ -306,6 +341,10 @@ class CdpPlayerPage implements PlayerPage {
     return this.evaluateVoid("window.caretv.play()");
   }
 
+  public restart(): Promise<void> {
+    return this.evaluateVoid("window.caretv.restart()");
+  }
+
   public async state(): Promise<PlayerState> {
     return (await this.evaluate("window.caretv.state()")) as PlayerState;
   }
@@ -323,19 +362,45 @@ class CdpPlayerPage implements PlayerPage {
   }
 
   private send(method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (this.closed) {
+      return Promise.reject(browserPageClosedError());
+    }
+
     const id = ++this.id;
     const message = JSON.stringify({ id, method, params });
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { reject, resolve });
-      this.socket.send(message);
+      try {
+        this.socket.send(message);
+      } catch {
+        this.pending.delete(id);
+        reject(browserPageClosedError());
+      }
     });
   }
+
+  private handleClose(): void {
+    if (this.closed) {
+      return;
+    }
+
+    this.closed = true;
+    const error = browserPageClosedError();
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
+
+function browserPageClosedError(): Error {
+  return new Error("browser-page-closed");
 }
 
 interface WebSocketLike {
   addEventListener(
-    type: "open" | "message" | "error",
+    type: "open" | "message" | "error" | "close",
     listener: (event: { data?: unknown }) => void,
     options?: { once?: boolean }
   ): void;
@@ -422,8 +487,17 @@ function playerHtml(): string {
     <meta charset="utf-8">
     <title>CareTV Local Player</title>
     <style>
-      html, body { background: #000; height: 100%; margin: 0; overflow: hidden; }
-      video { background: #000; height: 100vh; object-fit: contain; width: 100vw; }
+      html, body { background: #000; height: 100%; margin: 0; overflow: hidden; width: 100%; }
+      video {
+        background: #000;
+        display: block;
+        height: 100vh;
+        inset: 0;
+        object-fit: contain;
+        position: fixed;
+        width: 100vw;
+        z-index: 1;
+      }
     </style>
   </head>
   <body>
@@ -439,6 +513,10 @@ function playerHtml(): string {
         },
         pause: async () => video.pause(),
         play: async () => { await video.play(); },
+        restart: async () => {
+          video.currentTime = 0;
+          await video.play();
+        },
         state: () => ({
           currentTime: video.currentTime || 0,
           duration: Number.isFinite(video.duration) ? video.duration : undefined,
@@ -446,7 +524,9 @@ function playerHtml(): string {
           error: video.error ? String(video.error.code) : undefined,
           fullscreen: document.fullscreenElement === video,
           paused: video.paused,
-          readyState: video.readyState
+          readyState: video.readyState,
+          videoHeight: video.videoHeight || 0,
+          videoWidth: video.videoWidth || 0
         }),
         stop: async () => {
           video.pause();

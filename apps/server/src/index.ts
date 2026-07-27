@@ -25,6 +25,8 @@ import {
   migrate,
   openDatabase,
   PlaybackEventRepository,
+  PlaylistRepository,
+  playlistItems,
   QueueRepository,
   SettingsRepository
 } from "@caretv/database";
@@ -40,6 +42,7 @@ const downloads = new MediaDownloadRepository(db);
 const queue = new QueueRepository(db);
 const commands = new CommandRepository(db);
 const events = new PlaybackEventRepository(db);
+const playlists = new PlaylistRepository(db);
 const settings = new SettingsRepository(db);
 
 const app = Fastify({ bodyLimit: 1024 * 1024 * 1024, logger: true });
@@ -58,7 +61,7 @@ app.addContentTypeParser(
 app.addHook("onRequest", (request, reply, done) => {
   reply.header("Access-Control-Allow-Origin", "*");
   reply.header("Access-Control-Allow-Headers", "content-type");
-  reply.header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+  reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
 
   if (request.method === "OPTIONS") {
     reply.send();
@@ -71,6 +74,7 @@ app.addHook("onRequest", (request, reply, done) => {
 app.get("/health", () => createHealthStatus("server"));
 app.get("/api/v1/media", () => media.list());
 app.get("/api/v1/downloads", () => downloads.listPending());
+app.get("/api/v1/playlists", () => playlists.list());
 app.get("/api/v1/queue", () => queue.list());
 app.get("/api/v1/appliances", () => appliances.list(new Date()));
 app.get("/api/v1/playback/status", () => {
@@ -205,6 +209,93 @@ app.post("/api/v1/queue", (request, reply) => {
   return entry;
 });
 
+app.post("/api/v1/playlists", (request, reply) => {
+  const body = parseBody(request.body);
+  const mediaItemIds = validMediaItemIds(arrayField(body.mediaItemIds));
+
+  if (mediaItemIds.length === 0) {
+    reply.code(400);
+    return { error: "playlist-media-required" };
+  }
+
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const playlist = {
+    id,
+    name: stringField(body, "name", "Untitled playlist"),
+    items: playlistItems(id, mediaItemIds),
+    createdAt: now,
+    updatedAt: now
+  };
+
+  playlists.create(playlist);
+  reply.code(201);
+  return playlist;
+});
+
+app.put("/api/v1/playlists/:id", (request, reply) => {
+  const id = routeParam(request.params, "id");
+  const body = parseBody(request.body);
+  const mediaItemIds = validMediaItemIds(arrayField(body.mediaItemIds));
+
+  if (mediaItemIds.length === 0) {
+    reply.code(400);
+    return { error: "playlist-media-required" };
+  }
+
+  if (
+    !playlists.update(
+      id,
+      stringField(body, "name", "Untitled playlist"),
+      mediaItemIds,
+      new Date().toISOString()
+    )
+  ) {
+    reply.code(404);
+    return { error: "playlist-not-found" };
+  }
+
+  return playlists.get(id);
+});
+
+app.delete("/api/v1/playlists/:id", (request, reply) => {
+  if (!playlists.delete(routeParam(request.params, "id"))) {
+    reply.code(404);
+    return { error: "playlist-not-found" };
+  }
+
+  return { deleted: true };
+});
+
+app.post("/api/v1/playlists/:id/queue", (request, reply) => {
+  const playlist = playlists.get(routeParam(request.params, "id"));
+
+  if (!playlist) {
+    reply.code(404);
+    return { error: "playlist-not-found" };
+  }
+
+  const entries: QueueEntry[] = [];
+
+  for (const item of playlist.items) {
+    if (!media.get(item.mediaItemId)) {
+      continue;
+    }
+
+    const entry = createQueueEntry(item.mediaItemId);
+    queue.enqueue(entry);
+    entries.push(entry);
+  }
+
+  if (entries.length === 0) {
+    reply.code(409);
+    return { error: "playlist-has-no-available-media" };
+  }
+
+  reply.code(201);
+  return { entries };
+});
+
 app.post("/api/v1/queue/clear-completed", () => {
   db.exec("DELETE FROM playback_events;");
   return { cleared: queue.clearCompleted() };
@@ -294,34 +385,33 @@ app.post("/api/v1/prime-queue", async (request, reply) => {
     return { error: "prime-url-required" };
   }
 
+  const canonicalUrl = canonicalPrimeUrl(url);
   const now = new Date().toISOString();
-  const title = await titleForPrimeUrl(url, stringOptional(body.title));
-  const item: MediaItem = {
-    id: crypto.randomUUID(),
-    title,
-    service: "prime",
-    mediaType: "movie",
-    url,
-    enabled: true,
-    repeatable: true,
-    expectedDurationSeconds: numberField(body, "durationSeconds", 7200),
-    metadata: { sourceUrl: url },
-    createdAt: now,
-    updatedAt: now
-  };
-  const entry: QueueEntry = {
-    id: crypto.randomUUID(),
-    mediaItemId: item.id,
-    position: queue.nextPosition(),
-    priority: 0,
-    status: "queued",
-    attemptCount: 0
-  };
+  const existing = media.getByServiceUrl("prime", canonicalUrl);
+  const item =
+    existing ??
+    ({
+      id: crypto.randomUUID(),
+      title: await titleForPrimeUrl(canonicalUrl, stringOptional(body.title)),
+      service: "prime",
+      mediaType: "movie",
+      url: canonicalUrl,
+      enabled: true,
+      repeatable: true,
+      expectedDurationSeconds: numberField(body, "durationSeconds", 7200),
+      metadata: { sourceUrl: canonicalUrl },
+      createdAt: now,
+      updatedAt: now
+    } satisfies MediaItem);
+  const entry = createQueueEntry(item.id);
 
-  media.create(item);
+  if (!existing) {
+    media.create(item);
+  }
+
   queue.enqueue(entry);
   reply.code(201);
-  return { item, entry };
+  return { item, entry, duplicate: Boolean(existing) };
 });
 
 app.post("/api/v1/youtube-queue", async (request, reply) => {
@@ -333,34 +423,33 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
     return { error: "youtube-url-required" };
   }
 
+  const canonicalUrl = canonicalYouTubeUrl(url);
   const now = new Date().toISOString();
-  const title = await titleForYouTubeUrl(url, stringOptional(body.title));
-  const item: MediaItem = {
-    id: crypto.randomUUID(),
-    title,
-    service: "youtube",
-    mediaType: "video",
-    url,
-    enabled: true,
-    repeatable: true,
-    expectedDurationSeconds: numberField(body, "durationSeconds", 900),
-    metadata: { sourceUrl: url },
-    createdAt: now,
-    updatedAt: now
-  };
-  const entry: QueueEntry = {
-    id: crypto.randomUUID(),
-    mediaItemId: item.id,
-    position: queue.nextPosition(),
-    priority: 0,
-    status: "queued",
-    attemptCount: 0
-  };
+  const existing = media.getByServiceUrl("youtube", canonicalUrl);
+  const item =
+    existing ??
+    ({
+      id: crypto.randomUUID(),
+      title: await titleForYouTubeUrl(canonicalUrl, stringOptional(body.title)),
+      service: "youtube",
+      mediaType: "video",
+      url: canonicalUrl,
+      enabled: true,
+      repeatable: true,
+      expectedDurationSeconds: numberField(body, "durationSeconds", 900),
+      metadata: { sourceUrl: canonicalUrl },
+      createdAt: now,
+      updatedAt: now
+    } satisfies MediaItem);
+  const entry = createQueueEntry(item.id);
 
-  media.create(item);
+  if (!existing) {
+    media.create(item);
+  }
+
   queue.enqueue(entry);
   reply.code(201);
-  return { item, entry };
+  return { item, entry, duplicate: Boolean(existing) };
 });
 
 app.post("/api/v1/playback/start", () => {
@@ -391,6 +480,8 @@ app.post("/api/v1/lab/reset", () => {
     DELETE FROM playback_commands;
     DELETE FROM playback_sessions;
     DELETE FROM queue_entries;
+    DELETE FROM playlist_items;
+    DELETE FROM playlists;
     DELETE FROM media_deletions;
     DELETE FROM media_downloads;
     DELETE FROM media_items;
@@ -402,7 +493,7 @@ app.post("/api/v1/commands", (request, reply) => {
   const body = parseBody(request.body);
   const type = stringField(body, "type", "") as PlaybackCommandType;
 
-  if (!["pause", "resume", "skip", "stop"].includes(type)) {
+  if (!["pause", "restart", "resume", "skip", "stop"].includes(type)) {
     reply.code(400);
     return { error: "unsupported-command" };
   }
@@ -729,6 +820,17 @@ function createCommand(type: PlaybackCommandType, mediaItemId?: string): Playbac
   };
 }
 
+function createQueueEntry(mediaItemId: string): QueueEntry {
+  return {
+    id: crypto.randomUUID(),
+    mediaItemId,
+    position: queue.nextPosition(),
+    priority: 0,
+    status: "queued",
+    attemptCount: 0
+  };
+}
+
 function playbackSettings(): { enabled: boolean; loopEnabled: boolean } {
   const stored = settings.get("playback") ?? {};
   return {
@@ -758,6 +860,24 @@ function objectField(value: unknown): Record<string, unknown> {
 
 function arrayField(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function validMediaItemIds(values: unknown[]): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+
+  for (const value of values) {
+    const id = stringOptional(value);
+
+    if (!id || seen.has(id) || !media.get(id)) {
+      continue;
+    }
+
+    seen.add(id);
+    ids.push(id);
+  }
+
+  return ids;
 }
 
 function optionalStrings(body: Record<string, unknown>): {
@@ -838,6 +958,13 @@ function isPrimeUrl(input: string): boolean {
   } catch {
     return false;
   }
+}
+
+function canonicalPrimeUrl(input: string): string {
+  const url = new URL(input);
+  url.hash = "";
+  url.search = "";
+  return url.href;
 }
 
 async function titleForPrimeUrl(url: string, fallback?: string): Promise<string> {
@@ -962,4 +1089,18 @@ function isYouTubeUrl(input: string): boolean {
   } catch {
     return false;
   }
+}
+
+function canonicalYouTubeUrl(input: string): string {
+  const url = new URL(input);
+  const host = url.hostname.replace(/^www\./, "");
+  const videoId =
+    host === "youtu.be" ? url.pathname.split("/").filter(Boolean)[0] : url.searchParams.get("v");
+
+  if (!videoId) {
+    url.hash = "";
+    return url.href;
+  }
+
+  return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
 }

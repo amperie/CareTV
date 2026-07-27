@@ -1,4 +1,9 @@
-import type { AdapterLogger, PlaybackObservation, StreamingAdapter } from "@caretv/adapters";
+import {
+  isBrowserPageClosedError,
+  type AdapterLogger,
+  type PlaybackObservation,
+  type StreamingAdapter
+} from "@caretv/adapters";
 import type { MediaItem, PlaybackCommand, PlaybackState } from "@caretv/core";
 import type {
   CommandRepository,
@@ -88,6 +93,8 @@ export class PlaybackAgent {
       this.apply({ type: "BROWSER_LAUNCHED" });
       await adapter.start(context);
       await adapter.enterFullscreen(context);
+      await adapter.resume(context);
+      await adapter.enterFullscreen(context);
       this.apply({ type: "READY" });
 
       return await this.monitor(queueEntry.id, adapter, context);
@@ -114,7 +121,12 @@ export class PlaybackAgent {
         return commandResult;
       }
 
-      const observation = await adapter.observe(context);
+      const observation = await this.observeWithRecovery(queueEntryId, adapter, context);
+
+      if (!observation) {
+        return { status: "failed", queueEntryId, errorCode: "browser-recovery-failed" };
+      }
+
       const result = await this.applyObservation(queueEntryId, adapter, context, observation);
 
       if (result) {
@@ -128,6 +140,32 @@ export class PlaybackAgent {
 
     this.fail(queueEntryId, "observation-limit", "Fake playback did not finish in time.");
     return { status: "failed", queueEntryId, errorCode: "observation-limit" };
+  }
+
+  private async observeWithRecovery(
+    queueEntryId: string,
+    adapter: StreamingAdapter,
+    context: Parameters<StreamingAdapter["observe"]>[0]
+  ): Promise<PlaybackObservation | undefined> {
+    try {
+      return await adapter.observe(context);
+    } catch (error) {
+      if (!isBrowserPageClosedError(error)) {
+        throw error;
+      }
+
+      const attempt = this.state.recoveryAttempt + 1;
+      this.apply({ type: "RECOVERING", attempt });
+      const recovery = await adapter.recover(context, attempt);
+
+      if (!recovery.recovered) {
+        this.fail(queueEntryId, "browser-recovery-failed", recovery.message);
+        return undefined;
+      }
+
+      this.apply({ type: "PLAYING", positionSeconds: 0 });
+      return { status: "ready", positionSeconds: 0 };
+    }
   }
 
   private async applyPendingCommands(
@@ -172,6 +210,13 @@ export class PlaybackAgent {
         await adapter.resume(context);
         this.apply({ type: "RESUMED" });
         return undefined;
+      case "restart":
+        await adapter.restart(context);
+        if (this.state.phase === "paused") {
+          this.apply({ type: "RESUMED" });
+        }
+        this.apply({ type: "PLAYING", positionSeconds: 0 });
+        return undefined;
       case "skip":
       case "stop":
         await adapter.stop(context);
@@ -195,14 +240,31 @@ export class PlaybackAgent {
         this.apply(positionEvent("HEARTBEAT", observation.positionSeconds));
         return undefined;
       case "playing":
+        if (observation.fullscreen === false) {
+          await adapter.enterFullscreen(context);
+        }
+
         this.options.queue.updateStatus(queueEntryId, "playing");
         this.apply(playingEvent(observation));
         return undefined;
       case "paused":
+        if (this.state.phase !== "paused") {
+          await adapter.resume(context);
+          if (observation.fullscreen === false) {
+            await adapter.enterFullscreen(context);
+          }
+          this.apply(positionEvent("HEARTBEAT", observation.positionSeconds));
+          return undefined;
+        }
+
         this.options.queue.updateStatus(queueEntryId, "paused");
         this.apply(positionEvent("PAUSED", observation.positionSeconds));
         return undefined;
       case "buffering":
+        if (observation.fullscreen === false) {
+          await adapter.enterFullscreen(context);
+        }
+
         this.apply({ type: "BUFFERING" });
         return undefined;
       case "blocked":
@@ -302,6 +364,8 @@ function canApplyCommand(command: PlaybackCommand["type"], phase: PlaybackState[
       return phase === "playing" || phase === "buffering";
     case "resume":
       return phase === "paused";
+    case "restart":
+      return ["playing", "paused", "buffering"].includes(phase);
     case "skip":
     case "stop":
       return !["idle", "failed"].includes(phase);
