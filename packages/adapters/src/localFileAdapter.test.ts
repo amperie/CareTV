@@ -47,7 +47,7 @@ describe("local file adapter", () => {
     });
   });
 
-  it("passes pause, resume, stop, and cleanup through to the browser player", async () => {
+  it("passes pause, resume, and stop through to the browser player", async () => {
     await withMediaFile(async (localPath) => {
       const page = new FakePlayerPage(10);
       const adapter = new LocalFileAdapter({ openPlayer: () => Promise.resolve(page) });
@@ -72,7 +72,7 @@ describe("local file adapter", () => {
       expect(await adapter.observe(context)).toMatchObject({ status: "completed" });
 
       await adapter.cleanup(context);
-      expect(page.closed).toBe(true);
+      expect(page.closed).toBe(false);
     });
   });
 

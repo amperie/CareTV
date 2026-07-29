@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ActionIcon,
@@ -28,6 +28,7 @@ import "@mantine/core/styles.css";
 import {
   IconArrowDown,
   IconArrowUp,
+  IconAlertTriangle,
   IconLogin2,
   IconPlayerPause,
   IconPlayerPlay,
@@ -73,6 +74,7 @@ interface PlaybackStatus {
   running: boolean;
   state?: {
     phase: string;
+    mediaItemId?: string;
     title?: string;
     positionSeconds?: number;
     durationSeconds?: number;
@@ -86,11 +88,25 @@ interface Playlist {
   items: { mediaItemId: string; position: number }[];
 }
 
-type DashboardTab = "main" | "media" | "events";
+interface FallbackResponse {
+  playlist?: Playlist;
+}
+
+interface FallbackQueueItem {
+  title: string;
+  url: string;
+}
+
+type DashboardTab = "main" | "media" | "fallback" | "events";
 
 function App() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("main");
   const [editingPlaylistId, setEditingPlaylistId] = useState<string>();
+  const [fallbackDirty, setFallbackDirty] = useState(false);
+  const fallbackDirtyRef = useRef(false);
+  const [fallbackItems, setFallbackItems] = useState<FallbackQueueItem[]>([]);
+  const [fallbackMessage, setFallbackMessage] = useState("");
+  const [fallbackUrl, setFallbackUrl] = useState("");
   const [media, setMedia] = useState<MediaItem[]>(() => loadCachedArray<MediaItem>(mediaCacheKey));
   const [mediaSearch, setMediaSearch] = useState("");
   const [playlistMediaIds, setPlaylistMediaIds] = useState<string[]>([]);
@@ -104,10 +120,11 @@ function App() {
   const [uploading, setUploading] = useState(false);
 
   async function refresh() {
-    const [mediaItems, playlistItems, playbackStatus] = await Promise.all([
+    const [mediaItems, playlistItems, playbackStatus, fallbackStatus] = await Promise.all([
       getJson<MediaItem[]>("/media"),
       getJson<Playlist[]>("/playlists"),
-      getJson<PlaybackStatus>("/playback/status")
+      getJson<PlaybackStatus>("/playback/status"),
+      getJson<FallbackResponse>("/fallback/youtube")
     ]);
 
     if (Array.isArray(mediaItems)) {
@@ -122,6 +139,11 @@ function App() {
 
     if (playbackStatus) {
       setStatus(playbackStatus);
+    }
+
+    if (fallbackStatus && !fallbackDirtyRef.current) {
+      const currentMediaById = new Map((mediaItems ?? media).map((item) => [item.id, item]));
+      setFallbackItems(fallbackItemsFromPlaylist(fallbackStatus.playlist, currentMediaById));
     }
   }
 
@@ -162,6 +184,7 @@ function App() {
     state?.positionSeconds !== undefined && state.durationSeconds
       ? Math.min(100, Math.round((state.positionSeconds / state.durationSeconds) * 100))
       : 0;
+  const playbackIssue = currentPlaybackIssue(status, mediaById);
 
   async function addStreamingItem() {
     setQueueMessage("");
@@ -289,6 +312,75 @@ function App() {
     setEditingPlaylistId(undefined);
     setPlaylistName("New playlist");
     setPlaylistMediaIds([]);
+  }
+
+  function setFallbackDraft(items: FallbackQueueItem[], dirty = true) {
+    fallbackDirtyRef.current = dirty;
+    setFallbackDirty(dirty);
+    setFallbackItems(items);
+  }
+
+  function addFallbackItem() {
+    setFallbackMessage("");
+
+    if (!isYouTubeInput(fallbackUrl)) {
+      setFallbackMessage("Enter a public YouTube URL.");
+      return;
+    }
+
+    if (fallbackItems.some((item) => canonicalInputUrl(item.url) === canonicalInputUrl(fallbackUrl))) {
+      setFallbackMessage("That fallback video is already in the queue.");
+      return;
+    }
+
+    setFallbackDraft([...fallbackItems, { title: "Public YouTube fallback", url: fallbackUrl }]);
+    setFallbackUrl("");
+  }
+
+  function removeFallbackItem(index: number) {
+    setFallbackDraft(fallbackItems.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function moveFallbackItem(index: number, direction: "up" | "down") {
+    const nextIndex = direction === "up" ? index - 1 : index + 1;
+    const current = fallbackItems[index];
+    const neighbor = fallbackItems[nextIndex];
+
+    if (!current || !neighbor) return;
+
+    const next = [...fallbackItems];
+    next[index] = neighbor;
+    next[nextIndex] = current;
+    setFallbackDraft(next);
+  }
+
+  async function discardFallbackChanges() {
+    fallbackDirtyRef.current = false;
+    setFallbackDirty(false);
+    setFallbackMessage("");
+    await refresh();
+  }
+
+  async function saveFallbackQueue() {
+    setFallbackMessage("");
+    try {
+      await post(
+        "/fallback/youtube",
+        {
+          items: fallbackItems.map((item) => ({
+            title: item.title,
+            url: item.url
+          }))
+        },
+        "PUT"
+      );
+      fallbackDirtyRef.current = false;
+      setFallbackDirty(false);
+      setFallbackMessage("Fallback queue saved.");
+      await refresh();
+    } catch {
+      setFallbackMessage("Fallback queue could not be saved.");
+    }
   }
 
   function togglePlaylistMedia(mediaItemId: string) {
@@ -420,10 +512,34 @@ function App() {
 
         <AppShell.Main>
           <Container fluid maw={1480}>
+            {playbackIssue ? (
+              <Alert
+                color="red"
+                icon={<IconAlertTriangle size={18} />}
+                mb="md"
+                title={playbackIssue.title}
+                variant="light"
+              >
+                <Group justify="space-between" wrap="wrap">
+                  <Text>{playbackIssue.message}</Text>
+                  {playbackIssue.service ? (
+                    <Button
+                      leftSection={<IconLogin2 size={16} />}
+                      size="xs"
+                      variant="light"
+                      onClick={() => void openLogin(playbackIssue.service!)}
+                    >
+                      Open {serviceLabel(playbackIssue.service)} login
+                    </Button>
+                  ) : null}
+                </Group>
+              </Alert>
+            ) : null}
             <Tabs value={activeTab} onChange={(value) => setActiveTab(value as DashboardTab)}>
               <Tabs.List mb="md">
                 <Tabs.Tab value="main">Main</Tabs.Tab>
                 <Tabs.Tab value="media">Media</Tabs.Tab>
+                <Tabs.Tab value="fallback">Fallback</Tabs.Tab>
                 <Tabs.Tab value="events">Events</Tabs.Tab>
               </Tabs.List>
 
@@ -514,6 +630,21 @@ function App() {
                     onReset={() => void resetLab()}
                   />
                 </Stack>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="fallback">
+                <FallbackPanel
+                  dirty={fallbackDirty}
+                  items={fallbackItems}
+                  message={fallbackMessage}
+                  url={fallbackUrl}
+                  onAdd={addFallbackItem}
+                  onDiscard={() => void discardFallbackChanges()}
+                  onMove={moveFallbackItem}
+                  onRemove={removeFallbackItem}
+                  onSave={() => void saveFallbackQueue()}
+                  onUrlChange={setFallbackUrl}
+                />
               </Tabs.Panel>
 
               <Tabs.Panel value="events">
@@ -911,6 +1042,119 @@ function StreamingPanel(props: {
   );
 }
 
+function FallbackPanel(props: {
+  dirty: boolean;
+  items: FallbackQueueItem[];
+  message: string;
+  url: string;
+  onAdd: () => void;
+  onDiscard: () => void;
+  onMove: (index: number, direction: "up" | "down") => void;
+  onRemove: (index: number) => void;
+  onSave: () => void;
+  onUrlChange: (value: string) => void;
+}) {
+  return (
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="md">
+        <Group justify="space-between" align="start">
+          <Box>
+            <Title order={3}>YouTube fallback queue</Title>
+            <Text c="dimmed" size="sm">
+              Public videos the appliance queues when account-gated YouTube playback is blocked.
+            </Text>
+          </Box>
+          <Badge color={props.dirty ? "yellow" : "gray"} variant="light">
+            {props.dirty ? "Unsaved" : "Saved"}
+          </Badge>
+        </Group>
+
+        {props.message ? (
+          <Alert color={props.message.includes("saved") ? "teal" : "yellow"} variant="light">
+            {props.message}
+          </Alert>
+        ) : null}
+
+        <Group align="end" grow>
+          <TextInput
+            label="Public YouTube URL"
+            placeholder="https://www.youtube.com/watch?v=..."
+            value={props.url}
+            onChange={(event) => props.onUrlChange(event.currentTarget.value)}
+          />
+          <Button leftSection={<IconPlus size={16} />} onClick={() => props.onAdd()}>
+            Add
+          </Button>
+        </Group>
+
+        {props.items.length ? (
+          <Table highlightOnHover verticalSpacing="sm">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Order</Table.Th>
+                <Table.Th>Video</Table.Th>
+                <Table.Th ta="right">Actions</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {props.items.map((item, index) => (
+                <Table.Tr key={`${item.url}-${index}`}>
+                  <Table.Td>#{index + 1}</Table.Td>
+                  <Table.Td>
+                    <Text fw={600}>{item.title}</Text>
+                    <Text c="dimmed" size="sm" truncate="end">
+                      {item.url}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap={4} justify="flex-end" wrap="nowrap">
+                      <ActionIcon
+                        aria-label="Move fallback item up"
+                        disabled={index === 0}
+                        variant="light"
+                        onClick={() => props.onMove(index, "up")}
+                      >
+                        <IconArrowUp size={16} />
+                      </ActionIcon>
+                      <ActionIcon
+                        aria-label="Move fallback item down"
+                        disabled={index === props.items.length - 1}
+                        variant="light"
+                        onClick={() => props.onMove(index, "down")}
+                      >
+                        <IconArrowDown size={16} />
+                      </ActionIcon>
+                      <ActionIcon
+                        aria-label="Remove fallback item"
+                        color="red"
+                        variant="light"
+                        onClick={() => props.onRemove(index)}
+                      >
+                        <IconTrash size={16} />
+                      </ActionIcon>
+                    </Group>
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        ) : (
+          <Text c="dimmed">No fallback videos saved.</Text>
+        )}
+
+        <Group justify="flex-end">
+          <Button disabled={!props.dirty} variant="light" onClick={() => props.onDiscard()}>
+            Discard changes
+          </Button>
+          <Button disabled={!props.dirty} onClick={() => props.onSave()}>
+            Save fallback queue
+          </Button>
+        </Group>
+      </Stack>
+    </Card>
+  );
+}
+
 function PlaylistBuilder(props: {
   editing: boolean;
   mediaById: Map<string, MediaItem>;
@@ -1120,11 +1364,117 @@ function statusColor(status: string): string {
   return "yellow";
 }
 
+function currentPlaybackIssue(
+  status: PlaybackStatus | undefined,
+  mediaById: Map<string, MediaItem>
+):
+  | {
+      message: string;
+      service?: "prime" | "youtube";
+      title: string;
+    }
+  | undefined {
+  const stateError = status?.state?.error;
+
+  if (stateError) {
+    const media = status?.state?.mediaItemId ? mediaById.get(status.state.mediaItemId) : undefined;
+    return playbackIssueFor(stateError.code, stateError.message, media);
+  }
+
+  const failed = status?.queue.find((entry) => entry.status === "failed" && entry.lastErrorCode);
+  if (!failed?.lastErrorCode) return undefined;
+
+  return playbackIssueFor(
+    failed.lastErrorCode,
+    failed.lastErrorMessage ?? "Playback failed.",
+    mediaById.get(failed.mediaItemId)
+  );
+}
+
+function playbackIssueFor(
+  code: string,
+  message: string,
+  media: MediaItem | undefined
+):
+  | {
+      message: string;
+      service?: "prime" | "youtube";
+      title: string;
+    }
+  | undefined {
+  const service = media?.service === "youtube" || media?.service === "prime" ? media.service : undefined;
+
+  if (code.startsWith("youtube-")) {
+    const title = media?.title ? `YouTube needs attention: ${media.title}` : "YouTube needs attention";
+
+    if (
+      [
+        "youtube-signin-required",
+        "youtube-age-verification-required",
+        "youtube-verification-required"
+      ].includes(code)
+    ) {
+      return {
+        message: `${friendlyIssueCode(code)}. Open the YouTube login on the appliance, complete the prompt, then requeue the item.`,
+        service: "youtube",
+        title
+      };
+    }
+
+    if (code === "youtube-consent-required") {
+      return {
+        message: "YouTube is showing a consent prompt. Open the YouTube login on the appliance and clear the prompt.",
+        service: "youtube",
+        title
+      };
+    }
+  }
+
+  if (service === "prime" && code.includes("signin")) {
+    return {
+      message: `${message} Open the Prime login on the appliance, complete the prompt, then requeue the item.`,
+      service: "prime",
+      title: media?.title ? `Prime needs attention: ${media.title}` : "Prime needs attention"
+    };
+  }
+
+  return undefined;
+}
+
+function friendlyIssueCode(code: string): string {
+  switch (code) {
+    case "youtube-signin-required":
+      return "YouTube is signed out";
+    case "youtube-age-verification-required":
+      return "YouTube requires age verification";
+    case "youtube-verification-required":
+      return "Google requires account verification";
+    default:
+      return code;
+  }
+}
+
 function uploadStatus(item: MediaItem): string {
   const upload = item.metadata.upload;
   return upload && typeof upload === "object" && "status" in upload
     ? `upload ${String(upload.status)}`
     : "waiting for appliance";
+}
+
+function fallbackItemsFromPlaylist(
+  playlist: Playlist | undefined,
+  mediaById: Map<string, MediaItem>
+): FallbackQueueItem[] {
+  return (
+    playlist?.items
+      .sort((a, b) => a.position - b.position)
+      .map((item) => mediaById.get(item.mediaItemId))
+      .filter((item): item is MediaItem => Boolean(item?.url))
+      .map((item) => ({
+        title: item.title,
+        url: item.url!
+      })) ?? []
+  );
 }
 
 function streamingQueuePath(input: string): "/prime-queue" | "/youtube-queue" | undefined {
@@ -1138,6 +1488,25 @@ function streamingQueuePath(input: string): "/prime-queue" | "/youtube-queue" | 
     return undefined;
   }
   return undefined;
+}
+
+function isYouTubeInput(input: string): boolean {
+  try {
+    const host = new URL(input).hostname.replace(/^www\./, "");
+    return host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be";
+  } catch {
+    return false;
+  }
+}
+
+function canonicalInputUrl(input: string): string {
+  try {
+    const url = new URL(input);
+    url.hash = "";
+    return url.href;
+  } catch {
+    return input.trim();
+  }
 }
 
 function mediaSourceLabel(item: MediaItem): string {

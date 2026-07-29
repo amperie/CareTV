@@ -34,8 +34,59 @@ describe("youtube selectors", () => {
     expect(
       observationFromYouTubeDom({ hasVideo: false, text: "Sign in to confirm your age" }, 900)
     ).toMatchObject({
+      errorCode: "youtube-age-verification-required",
+      status: "blocked"
+    });
+  });
+
+  it("reports signed-out and verification blockers", () => {
+    expect(
+      observationFromYouTubeDom(
+        { currentUrl: "https://accounts.google.com/ServiceLogin", hasVideo: false, text: "" },
+        900
+      )
+    ).toMatchObject({
       errorCode: "youtube-signin-required",
       status: "blocked"
+    });
+    expect(
+      observationFromYouTubeDom(
+        { hasAccountButton: false, hasSignInButton: true, hasVideo: false, text: "" },
+        900
+      )
+    ).toMatchObject({
+      errorCode: "youtube-signin-required",
+      status: "blocked"
+    });
+    expect(
+      observationFromYouTubeDom(
+        { hasVideo: false, text: "This helps protect your account. Verify it's you." },
+        900
+      )
+    ).toMatchObject({
+      errorCode: "youtube-verification-required",
+      status: "blocked"
+    });
+  });
+
+  it("does not block public playback just because the sign-in button is visible", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          currentTime: 5,
+          duration: 60,
+          hasAccountButton: false,
+          hasSignInButton: true,
+          hasVideo: true,
+          paused: false,
+          readyState: 4,
+          text: ""
+        },
+        900
+      )
+    ).toMatchObject({
+      positionSeconds: 5,
+      status: "playing"
     });
   });
 

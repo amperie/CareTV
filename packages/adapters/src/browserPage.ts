@@ -11,7 +11,9 @@ export interface BrowserPage {
   clickFirst(selectors: string[]): Promise<boolean>;
   close(): Promise<void>;
   evaluate<T>(expression: string): Promise<T>;
+  navigate(url: string): Promise<void>;
   pressKey(key: "f"): Promise<void>;
+  setWindowFullscreen(): Promise<void>;
   waitForSelector(selectors: string[], timeoutMs?: number): Promise<boolean>;
 }
 
@@ -28,18 +30,40 @@ export type LoginBrowserService = "prime" | "youtube";
 const loginProcesses = new Set<ChildProcessWithoutNullStreams>();
 
 export class ChromeBrowser {
+  private page: BrowserPage | undefined;
   private process: ChildProcessWithoutNullStreams | undefined;
 
   public constructor(private readonly options: ChromeBrowserOptions = {}) {}
 
   public async open(url: string): Promise<BrowserPage> {
-    await this.ensureBrowser();
-    await closePageTargets(this.port());
-    const target = await createTarget(this.port(), url);
-    const page = await CdpBrowserPage.connect(target.webSocketDebuggerUrl);
-    await page.navigate(url);
-    await page.bringToFront();
-    return page;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.ensureBrowser();
+
+      try {
+        if (this.page) {
+          await this.page.navigate(url);
+          await this.page.bringToFront();
+          return this.page;
+        }
+
+        const target = await createTarget(this.port(), url);
+        await closePageTargets(this.port(), new Set([target.id]));
+        this.page = await CdpBrowserPage.connect(target.webSocketDebuggerUrl);
+        await this.page.navigate(url);
+        await this.page.bringToFront();
+        return this.page;
+      } catch (error) {
+        this.page = undefined;
+
+        if (attempt > 0 || !isCreateTargetError(error)) {
+          throw error;
+        }
+
+        await this.restartBrowser();
+      }
+    }
+
+    throw new Error("Chrome target creation failed after restart.");
   }
 
   private async ensureBrowser(): Promise<void> {
@@ -71,6 +95,16 @@ export class ChromeBrowser {
 
   private port(): number {
     return this.options.remoteDebuggingPort ?? 9223;
+  }
+
+  private async restartBrowser(): Promise<void> {
+    if (this.process && !this.process.killed) {
+      this.process.kill();
+    }
+
+    this.process = undefined;
+    this.page = undefined;
+    await wait(800);
   }
 }
 
@@ -134,7 +168,7 @@ class CdpBrowserPage implements BrowserPage {
     socket.addEventListener("message", (event: { data?: unknown }) => {
       const message = JSON.parse(String(event.data)) as {
         id?: number;
-        result?: { result?: { value?: unknown } };
+        result?: unknown;
         error?: { message?: string };
       };
 
@@ -152,7 +186,7 @@ class CdpBrowserPage implements BrowserPage {
       if (message.error) {
         pending.reject(new Error(message.error.message ?? "CDP command failed."));
       } else {
-        pending.resolve(message.result?.result?.value);
+        pending.resolve(message.result);
       }
     });
     socket.addEventListener("close", () => this.handleClose());
@@ -285,6 +319,21 @@ class CdpBrowserPage implements BrowserPage {
     await this.send("Page.bringToFront", {});
   }
 
+  public async setWindowFullscreen(): Promise<void> {
+    const window = (await this.send("Browser.getWindowForTarget", {})) as
+      | { windowId?: number }
+      | undefined;
+
+    if (typeof window?.windowId !== "number") {
+      return;
+    }
+
+    await this.send("Browser.setWindowBounds", {
+      bounds: { windowState: "fullscreen" },
+      windowId: window.windowId
+    });
+  }
+
   public async navigate(url: string): Promise<void> {
     await this.send("Page.navigate", { url });
   }
@@ -294,7 +343,7 @@ class CdpBrowserPage implements BrowserPage {
       awaitPromise: true,
       expression,
       returnByValue: true
-    }) as Promise<T>;
+    }).then((result) => (result as { result?: { value?: T } }).result?.value as T);
   }
 
   public async pressKey(key: "f"): Promise<void> {
@@ -413,11 +462,13 @@ async function pageTargets(port: number): Promise<ChromeTarget[]> {
   }
 }
 
-async function closePageTargets(port: number): Promise<void> {
+async function closePageTargets(port: number, keepIds = new Set<string>()): Promise<void> {
   await Promise.all(
-    (await pageTargets(port)).map((target) =>
-      fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined)
-    )
+    (await pageTargets(port))
+      .filter((target) => !keepIds.has(target.id))
+      .map((target) =>
+        fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined)
+      )
   );
 }
 
@@ -427,7 +478,10 @@ async function createTarget(port: number, url: string): Promise<ChromeTarget> {
   });
 
   if (!response.ok) {
-    throw new Error(`Chrome target creation failed with ${response.status}.`);
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `Chrome target creation failed with ${response.status}${body ? `: ${body}` : ""}.`
+    );
   }
 
   return (await response.json()) as ChromeTarget;
@@ -452,6 +506,14 @@ async function waitForDebugPort(port: number): Promise<void> {
   }
 
   throw new Error("Chrome did not expose its remote debugging port.");
+}
+
+function isCreateTargetError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Chrome target creation failed");
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function findChromePath(): string {

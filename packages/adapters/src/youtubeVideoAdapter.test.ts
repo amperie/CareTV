@@ -27,7 +27,7 @@ describe("youtube video adapter", () => {
     await adapter.prepare(context);
     await adapter.start(context);
 
-    expect(openedUrl).toBe("https://www.youtube.com/watch?v=abc123");
+    expect(openedUrl).toBe("https://www.youtube.com/watch?v=abc123&start=0");
     expect(page.evaluations.some((expression) => expression.includes("currentTime = 0"))).toBe(
       true
     );
@@ -93,9 +93,18 @@ class FakeBrowserPage implements BrowserPage {
     return Promise.resolve(undefined as T);
   }
 
+  public navigate(): Promise<void> {
+    return Promise.resolve();
+  }
+
   public pressKey(): Promise<void> {
     this.pressKeyCount += 1;
     this.fullscreen = !this.fullscreen;
+    return Promise.resolve();
+  }
+
+  public setWindowFullscreen(): Promise<void> {
+    this.fullscreen = true;
     return Promise.resolve();
   }
 

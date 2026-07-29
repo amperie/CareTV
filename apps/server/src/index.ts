@@ -47,6 +47,7 @@ const settings = new SettingsRepository(db);
 
 const app = Fastify({ bodyLimit: 1024 * 1024 * 1024, logger: true });
 const uploadDir = join(config.values.runtimeDir, "uploads");
+const youtubeFallbackSettingKey = "youtubeFallbackPlaylist";
 
 await mkdir(uploadDir, { recursive: true });
 
@@ -452,6 +453,151 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
   return { item, entry, duplicate: Boolean(existing) };
 });
 
+app.get("/api/v1/fallback/youtube", () => ({
+  playlist: youtubeFallbackPlaylist()
+}));
+
+app.put("/api/v1/fallback/youtube", async (request, reply) => {
+  const body = parseBody(request.body);
+  const items = arrayField(body.items);
+  const playlist = ensureYouTubeFallbackPlaylist();
+  const now = new Date().toISOString();
+  const mediaItemIds: string[] = [];
+
+  for (const itemBody of items) {
+    const item = parseBody(itemBody);
+    const url = stringField(item, "url", "");
+
+    if (!isYouTubeUrl(url)) {
+      reply.code(400);
+      return { error: "youtube-url-required" };
+    }
+
+    const canonicalUrl = canonicalYouTubeUrl(url);
+    const existing = media.getByServiceUrl("youtube", canonicalUrl);
+    const mediaItem =
+      existing ??
+      ({
+        id: crypto.randomUUID(),
+        title: await titleForYouTubeUrl(canonicalUrl, stringOptional(item.title)),
+        service: "youtube",
+        mediaType: "video",
+        url: canonicalUrl,
+        enabled: true,
+        repeatable: true,
+        expectedDurationSeconds: numberField(item, "durationSeconds", 1800),
+        metadata: { fallback: true, sourceUrl: canonicalUrl },
+        createdAt: now,
+        updatedAt: now
+      } satisfies MediaItem);
+
+    if (!existing) {
+      media.create(mediaItem);
+    }
+
+    if (!mediaItemIds.includes(mediaItem.id)) {
+      mediaItemIds.push(mediaItem.id);
+    }
+  }
+
+  playlists.update(playlist.id, playlist.name, mediaItemIds, now);
+  return { playlist: playlists.get(playlist.id) };
+});
+
+app.post("/api/v1/fallback/youtube/items", async (request, reply) => {
+  const body = parseBody(request.body);
+  const url = stringField(body, "url", "");
+
+  if (!isYouTubeUrl(url)) {
+    reply.code(400);
+    return { error: "youtube-url-required" };
+  }
+
+  const playlist = ensureYouTubeFallbackPlaylist();
+  const canonicalUrl = canonicalYouTubeUrl(url);
+  const now = new Date().toISOString();
+  const existing = media.getByServiceUrl("youtube", canonicalUrl);
+  const item =
+    existing ??
+    ({
+      id: crypto.randomUUID(),
+      title: await titleForYouTubeUrl(canonicalUrl, stringOptional(body.title)),
+      service: "youtube",
+      mediaType: "video",
+      url: canonicalUrl,
+      enabled: true,
+      repeatable: true,
+      expectedDurationSeconds: numberField(body, "durationSeconds", 1800),
+      metadata: { fallback: true, sourceUrl: canonicalUrl },
+      createdAt: now,
+      updatedAt: now
+    } satisfies MediaItem);
+
+  if (!existing) {
+    media.create(item);
+  }
+
+  const mediaItemIds = [
+    ...playlist.items.map((playlistItem) => playlistItem.mediaItemId),
+    item.id
+  ].filter((id, index, ids) => ids.indexOf(id) === index);
+
+  playlists.update(playlist.id, playlist.name, mediaItemIds, now);
+  reply.code(201);
+  return { item, playlist: playlists.get(playlist.id) };
+});
+
+app.delete("/api/v1/fallback/youtube/items/:mediaItemId", (request, reply) => {
+  const playlist = youtubeFallbackPlaylist();
+
+  if (!playlist) {
+    reply.code(404);
+    return { error: "fallback-playlist-not-found" };
+  }
+
+  const mediaItemId = routeParam(request.params, "mediaItemId");
+  const mediaItemIds = playlist.items
+    .map((playlistItem) => playlistItem.mediaItemId)
+    .filter((id) => id !== mediaItemId);
+
+  playlists.update(playlist.id, playlist.name, mediaItemIds, new Date().toISOString());
+  return { playlist: playlists.get(playlist.id) };
+});
+
+app.post("/api/v1/appliance/fallback/youtube", (request, reply) => {
+  const fallbackPlaylist = youtubeFallbackPlaylist();
+  const fallbackMediaIds = fallbackPlaylist?.items.map((item) => item.mediaItemId) ?? [];
+
+  if (fallbackMediaIds.length === 0) {
+    return { entries: [], skipped: "fallback-playlist-empty" };
+  }
+
+  const existingFallbackMediaIds = new Set(fallbackMediaIds);
+  const fallbackAlreadyRunnable = queue
+    .list()
+    .some(
+      (entry) =>
+        existingFallbackMediaIds.has(entry.mediaItemId) &&
+        ["queued", "starting", "playing", "paused"].includes(entry.status)
+    );
+
+  if (fallbackAlreadyRunnable) {
+    return { entries: [], skipped: "fallback-already-runnable" };
+  }
+
+  const entries: QueueEntry[] = [];
+
+  for (const mediaItemId of fallbackMediaIds) {
+    if (!media.get(mediaItemId)) continue;
+    const entry = createQueueEntry(mediaItemId);
+    queue.enqueue(entry);
+    entries.push(entry);
+  }
+
+  reply.code(201);
+  return { entries };
+});
+
 app.post("/api/v1/playback/start", () => {
   if (queue.runnableCount() === 0) {
     queue.requeueCompletedEntries();
@@ -829,6 +975,32 @@ function createCommand(type: PlaybackCommandType, mediaItemId?: string): Playbac
     issuedBy: "dashboard",
     status: "pending"
   };
+}
+
+function youtubeFallbackPlaylist() {
+  const playlistId = stringOptional(settings.get(youtubeFallbackSettingKey)?.playlistId);
+  return playlistId ? playlists.get(playlistId) : undefined;
+}
+
+function ensureYouTubeFallbackPlaylist() {
+  const existing = youtubeFallbackPlaylist();
+
+  if (existing) {
+    return existing;
+  }
+
+  const now = new Date().toISOString();
+  const playlist = {
+    id: crypto.randomUUID(),
+    name: "YouTube fallback queue",
+    items: [],
+    createdAt: now,
+    updatedAt: now
+  };
+
+  playlists.create(playlist);
+  settings.set(youtubeFallbackSettingKey, { playlistId: playlist.id }, now);
+  return playlist;
 }
 
 function createQueueEntry(mediaItemId: string): QueueEntry {

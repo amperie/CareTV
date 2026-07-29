@@ -165,8 +165,6 @@ export class PrimeVideoAdapter implements StreamingAdapter {
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
-    const session = this.sessions.get(context.mediaItem.id);
-    await session?.page?.close();
     this.sessions.delete(context.mediaItem.id);
   }
 

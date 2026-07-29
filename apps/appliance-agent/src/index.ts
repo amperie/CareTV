@@ -2,7 +2,6 @@ import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
-  closeLoginBrowsers,
   FakeStreamingAdapter,
   isBrowserPageClosedError,
   LocalFileAdapter,
@@ -55,6 +54,12 @@ async function main(): Promise<void> {
       }
 
       if (!playback.enabled) {
+        await sleep(config.values.appliancePollMs);
+        continue;
+      }
+
+      if (!canSelectQueueEntry()) {
+        await heartbeat(true);
         await sleep(config.values.appliancePollMs);
         continue;
       }
@@ -234,6 +239,10 @@ async function play(queueEntry: QueueEntry): Promise<void> {
   };
 
   try {
+    if (!canSelectQueueEntry()) {
+      await apply({ type: "STOPPED" });
+    }
+
     await apply({
       type: "QUEUE_SELECTED",
       queueEntryId: queueEntry.id,
@@ -241,7 +250,6 @@ async function play(queueEntry: QueueEntry): Promise<void> {
       adapterId: adapter.id,
       title: mediaItem.title
     });
-    await closeLoginBrowsers();
     await adapter.prepare(context);
     await apply({ type: "BROWSER_LAUNCHED" });
     await adapter.start(context);
@@ -437,6 +445,17 @@ async function applyObservation(
         await apply({ type: "RECOVERING", attempt: state.recoveryAttempt + 1 });
         return undefined;
       }
+      if (shouldQueueYouTubeFallback(observation.errorCode)) {
+        await client.queueYouTubeFallback().catch((error) =>
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              message: "YouTube fallback queue failed.",
+              error: error instanceof Error ? error.message : "Unknown error"
+            })
+          )
+        );
+      }
       await fail(
         queueEntryId,
         observation.errorCode ?? "blocked",
@@ -494,6 +513,10 @@ function canApplyCommand(command: PlaybackCommand, phase: PlaybackState["phase"]
     default:
       return false;
   }
+}
+
+function canSelectQueueEntry(): boolean {
+  return state.phase === "idle" || state.phase === "failed";
 }
 
 function positionEvent(
@@ -607,6 +630,13 @@ class ServerClient {
     );
   }
 
+  public queueYouTubeFallback() {
+    return this.post<{ entries: QueueEntry[]; skipped?: string }>(
+      "/api/v1/appliance/fallback/youtube",
+      {}
+    );
+  }
+
   public pendingCommands() {
     return this.get<PlaybackCommand[]>("/api/v1/appliance/commands");
   }
@@ -690,6 +720,18 @@ class ServerClient {
 const client = new ServerClient(config.values.serverUrl, config.values.applianceRequestTimeoutMs);
 
 void main();
+
+function shouldQueueYouTubeFallback(code: string | undefined): boolean {
+  return Boolean(
+    code &&
+      [
+        "youtube-signin-required",
+        "youtube-age-verification-required",
+        "youtube-verification-required",
+        "youtube-consent-required"
+      ].includes(code)
+  );
+}
 
 interface LocalMediaInventoryItem {
   localPath: string;

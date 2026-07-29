@@ -170,8 +170,6 @@ export class LocalFileAdapter implements StreamingAdapter {
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
-    const session = this.sessions.get(context.mediaItem.id);
-    await session?.page?.close();
     this.sessions.delete(context.mediaItem.id);
   }
 
@@ -187,6 +185,7 @@ export class LocalFileAdapter implements StreamingAdapter {
 }
 
 class ChromeLocalPlayerBrowser {
+  private page: CdpPlayerPage | undefined;
   private process: ChildProcessWithoutNullStreams | undefined;
   private playerPath: string | undefined;
 
@@ -200,15 +199,38 @@ class ChromeLocalPlayerBrowser {
   ) {}
 
   public async open(localPath: string): Promise<PlayerPage> {
-    await this.ensureBrowser();
     const playerUrl = await this.playerUrl(localPath);
-    await closePageTargets(this.port());
-    const target = await createTarget(this.port(), playerUrl);
-    const page = await CdpPlayerPage.connect(target.webSocketDebuggerUrl);
-    await page.navigate(playerUrl);
-    await page.bringToFront();
-    await page.waitForReady();
-    return page;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.ensureBrowser();
+
+      try {
+        if (this.page) {
+          await this.page.navigate(playerUrl);
+          await this.page.bringToFront();
+          await this.page.waitForReady();
+          return this.page;
+        }
+
+        const target = await createTarget(this.port(), playerUrl);
+        await closePageTargets(this.port(), new Set([target.id]));
+        this.page = await CdpPlayerPage.connect(target.webSocketDebuggerUrl);
+        await this.page.navigate(playerUrl);
+        await this.page.bringToFront();
+        await this.page.waitForReady();
+        return this.page;
+      } catch (error) {
+        this.page = undefined;
+
+        if (attempt > 0 || !isCreateTargetError(error)) {
+          throw error;
+        }
+
+        await this.restartBrowser();
+      }
+    }
+
+    throw new Error("Chrome target creation failed after restart.");
   }
 
   private async ensureBrowser(): Promise<void> {
@@ -250,6 +272,16 @@ class ChromeLocalPlayerBrowser {
 
   private port(): number {
     return this.options.remoteDebuggingPort ?? 9223;
+  }
+
+  private async restartBrowser(): Promise<void> {
+    if (this.process && !this.process.killed) {
+      this.process.kill();
+    }
+
+    this.page = undefined;
+    this.process = undefined;
+    await wait(800);
   }
 }
 
@@ -435,11 +467,13 @@ async function pageTargets(port: number): Promise<ChromeTarget[]> {
   }
 }
 
-async function closePageTargets(port: number): Promise<void> {
+async function closePageTargets(port: number, keepIds = new Set<string>()): Promise<void> {
   await Promise.all(
-    (await pageTargets(port)).map((target) =>
-      fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined)
-    )
+    (await pageTargets(port))
+      .filter((target) => !keepIds.has(target.id))
+      .map((target) =>
+        fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).catch(() => undefined)
+      )
   );
 }
 
@@ -449,7 +483,10 @@ async function createTarget(port: number, url: string): Promise<ChromeTarget> {
   });
 
   if (!response.ok) {
-    throw new Error(`Chrome target creation failed with ${response.status}.`);
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `Chrome target creation failed with ${response.status}${body ? `: ${body}` : ""}.`
+    );
   }
 
   return (await response.json()) as ChromeTarget;
@@ -474,6 +511,14 @@ async function waitForDebugPort(port: number): Promise<void> {
   }
 
   throw new Error("Chrome did not expose its remote debugging port.");
+}
+
+function isCreateTargetError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("Chrome target creation failed");
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function writePlayerHtml(playerDir = join(tmpdir(), "caretv-player")): Promise<string> {

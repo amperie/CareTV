@@ -68,7 +68,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     await this.dismissKnownInterruptions(context);
     await page.clickFirst(youtubeSelectors.playButton);
     await page.clickByText(["play"]);
-    await playFromStart(page);
+    await startPlaybackFromBeginning(page);
     await this.enterFullscreen(context);
   }
 
@@ -83,7 +83,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     const page = this.session(context).page;
 
     if (page) {
-      await playFromStart(page);
+      await startPlaybackFromBeginning(page);
       await this.enterFullscreen(context);
     }
   }
@@ -91,7 +91,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
   public async resume(context: AdapterContext): Promise<void> {
     await this.dismissKnownInterruptions(context);
     await this.session(context).page?.evaluate<void>(
-      `document.querySelector("${youtubeSelectors.video}")?.play().catch(() => undefined)`
+      `document.querySelector("${youtubeSelectors.video}")?.play()?.catch?.(() => undefined)`
     );
     await this.enterFullscreen(context);
   }
@@ -112,6 +112,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
       5_000
     );
 
+    await page.setWindowFullscreen();
     await forceYouTubeViewport(page);
 
     if (await youtubeFullscreen(page)) {
@@ -171,12 +172,19 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
           document.querySelector(".ytp-ad-player-overlay, .ytp-ad-text")
         ),
         currentTime: video?.currentTime,
+        currentUrl: location.href,
         duration: Number.isFinite(video?.duration) ? video.duration : undefined,
         ended: video?.ended,
         fullscreen: Boolean(
           player?.classList.contains("ytp-fullscreen") ||
           (document.fullscreenElement &&
             (document.fullscreenElement === video || document.fullscreenElement === player))
+        ),
+        hasAccountButton: Boolean(
+          document.querySelector("#avatar-btn, button[aria-label*='Account' i]")
+        ),
+        hasSignInButton: Boolean(
+          document.querySelector("a[href*='ServiceLogin'], a[href*='accounts.google.com'], ytd-button-renderer a[aria-label*='Sign in' i], button[aria-label*='Sign in' i]")
         ),
         hasVideo: Boolean(video),
         paused: video?.paused,
@@ -220,8 +228,6 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
-    const session = this.sessions.get(context.mediaItem.id);
-    await session?.page?.close();
     this.sessions.delete(context.mediaItem.id);
   }
 
@@ -252,7 +258,7 @@ function normalizeYouTubeUrl(input: string): string {
     host === "youtu.be" ? url.pathname.split("/").filter(Boolean)[0] : url.searchParams.get("v");
 
   if (id) {
-    return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+    return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}&start=0`;
   }
 
   url.hash = "";
@@ -280,12 +286,14 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function playFromStart(page: BrowserPage): Promise<void> {
+function startPlaybackFromBeginning(page: BrowserPage): Promise<void> {
   return page.evaluate<void>(`(() => {
     const video = document.querySelector("${youtubeSelectors.video}");
     if (!video) return;
-    video.currentTime = 0;
-    return video.play().catch(() => undefined);
+    if (Number.isFinite(video.duration) && video.currentTime > 1) {
+      video.currentTime = 0;
+    }
+    video.play()?.catch?.(() => undefined);
   })()`);
 }
 
