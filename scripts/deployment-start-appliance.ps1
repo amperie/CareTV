@@ -6,6 +6,7 @@ $configPath = Join-Path $repoRoot "caretv.config.json"
 
 if (Test-Path $configPath) {
   $env:CARETV_CONFIG_FILE = $configPath
+  Remove-Item Env:CARETV_SERVER_URL -ErrorAction SilentlyContinue
 } elseif (-not $env:CARETV_SERVER_URL) {
   $env:CARETV_SERVER_URL = "http://w11.lan:4010"
 }
