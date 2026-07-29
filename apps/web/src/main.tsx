@@ -1526,6 +1526,15 @@ function playbackIssueFor(
         title
       };
     }
+
+    if (code === "youtube-buffering-timeout") {
+      return {
+        message: "YouTube stayed buffered too long. Retry the item or let the queue continue.",
+        ...(queueEntryId ? { queueEntryId } : {}),
+        service: "youtube",
+        title
+      };
+    }
   }
 
   if (service === "prime" && code.includes("signin")) {

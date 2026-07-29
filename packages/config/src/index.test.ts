@@ -16,6 +16,7 @@ describe("config", () => {
       webPort: 4020,
       appliancePollMs: 1000,
       applianceHeartbeatMs: 5000,
+      applianceBufferingTimeoutMs: 45000,
       appliancePlaybackObserveMs: 1000,
       applianceRequestTimeoutMs: 10000,
       applianceMediaScanMs: 30000,
@@ -132,14 +133,15 @@ describe("config", () => {
         applianceName: "Local Appliance",
         appliancePollMs: 1000,
         applianceHeartbeatMs: 5000,
+        applianceBufferingTimeoutMs: 45000,
         appliancePlaybackObserveMs: 1000,
         applianceRequestTimeoutMs: 10000,
-      applianceMediaDir: "media",
-      applianceMediaScanMs: 30000,
-      notificationFormat: "json",
-      serverUrl: "http://127.0.0.1:4010",
-      authToken: "0123456789abcdef"
-    })
+        applianceMediaDir: "media",
+        applianceMediaScanMs: 30000,
+        notificationFormat: "json",
+        serverUrl: "http://127.0.0.1:4010",
+        authToken: "0123456789abcdef"
+      })
     ).toMatchObject({ authToken: "[redacted]" });
   });
 });

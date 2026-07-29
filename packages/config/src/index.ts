@@ -20,6 +20,7 @@ const envSchema = z.object({
   CARETV_APPLIANCE_NAME: z.string().min(1).default("Local Appliance"),
   CARETV_APPLIANCE_POLL_MS: millisecondsSchema.default(1000),
   CARETV_APPLIANCE_HEARTBEAT_MS: millisecondsSchema.default(5000),
+  CARETV_APPLIANCE_BUFFERING_TIMEOUT_MS: millisecondsSchema.default(45000),
   CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS: millisecondsSchema.default(1000),
   CARETV_APPLIANCE_REQUEST_TIMEOUT_MS: millisecondsSchema.default(10000),
   CARETV_APPLIANCE_MEDIA_DIR: z.string().min(1).default(resolve(defaultDataDir, "media")),
@@ -43,6 +44,7 @@ const fileSchema = z
     applianceName: z.string().min(1).optional(),
     appliancePollMs: millisecondsSchema.optional(),
     applianceHeartbeatMs: millisecondsSchema.optional(),
+    applianceBufferingTimeoutMs: millisecondsSchema.optional(),
     appliancePlaybackObserveMs: millisecondsSchema.optional(),
     applianceRequestTimeoutMs: millisecondsSchema.optional(),
     applianceMediaDir: z.string().min(1).optional(),
@@ -67,6 +69,7 @@ export interface CareTvConfig {
   applianceName: string;
   appliancePollMs: number;
   applianceHeartbeatMs: number;
+  applianceBufferingTimeoutMs: number;
   appliancePlaybackObserveMs: number;
   applianceRequestTimeoutMs: number;
   applianceMediaDir: string;
@@ -120,6 +123,7 @@ export function loadConfig(
     applianceName: parsed.data.CARETV_APPLIANCE_NAME,
     appliancePollMs: parsed.data.CARETV_APPLIANCE_POLL_MS,
     applianceHeartbeatMs: parsed.data.CARETV_APPLIANCE_HEARTBEAT_MS,
+    applianceBufferingTimeoutMs: parsed.data.CARETV_APPLIANCE_BUFFERING_TIMEOUT_MS,
     appliancePlaybackObserveMs: parsed.data.CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS,
     applianceRequestTimeoutMs: parsed.data.CARETV_APPLIANCE_REQUEST_TIMEOUT_MS,
     applianceMediaDir: normalizePath(parsed.data.CARETV_APPLIANCE_MEDIA_DIR, cwd),
@@ -200,6 +204,9 @@ function toEnvConfig(config: Partial<CareTvConfig>): Record<string, unknown> {
     ...(config.appliancePollMs ? { CARETV_APPLIANCE_POLL_MS: config.appliancePollMs } : {}),
     ...(config.applianceHeartbeatMs
       ? { CARETV_APPLIANCE_HEARTBEAT_MS: config.applianceHeartbeatMs }
+      : {}),
+    ...(config.applianceBufferingTimeoutMs
+      ? { CARETV_APPLIANCE_BUFFERING_TIMEOUT_MS: config.applianceBufferingTimeoutMs }
       : {}),
     ...(config.appliancePlaybackObserveMs
       ? { CARETV_APPLIANCE_PLAYBACK_OBSERVE_MS: config.appliancePlaybackObserveMs }

@@ -44,6 +44,7 @@ async function main(): Promise<void> {
       applianceId: config.values.applianceId,
       name: config.values.applianceName,
       serverUrl: config.values.serverUrl,
+      bufferingTimeoutMs: config.values.applianceBufferingTimeoutMs,
       pollMs: config.values.appliancePollMs,
       heartbeatMs: config.values.applianceHeartbeatMs,
       playbackObserveMs: config.values.appliancePlaybackObserveMs,
@@ -289,9 +290,12 @@ async function monitor(
 ): Promise<"completed" | "failed" | "skipped"> {
   const startedAt = Date.now();
   const maxRuntimeMs = maxRuntimeMsFor(mediaItem);
+  let bufferingSince: number | undefined;
 
   for (;;) {
-    if (Date.now() - startedAt > maxRuntimeMs) {
+    const now = Date.now();
+
+    if (now - startedAt > maxRuntimeMs) {
       await fail(queueEntry.id, "observation-limit", `Playback did not finish: ${mediaItem.title}`);
       return "failed";
     }
@@ -306,6 +310,21 @@ async function monitor(
 
     if (!observation) {
       return "failed";
+    }
+
+    if (observation.status === "buffering") {
+      bufferingSince ??= now;
+
+      if (now - bufferingSince >= config.values.applianceBufferingTimeoutMs) {
+        await fail(
+          queueEntry.id,
+          `${streamingAdapter.id}-buffering-timeout`,
+          `Playback buffered for more than ${Math.round(config.values.applianceBufferingTimeoutMs / 1000)} seconds.`
+        );
+        return "failed";
+      }
+    } else {
+      bufferingSince = undefined;
     }
 
     const result = await applyObservation(queueEntry.id, streamingAdapter, context, observation);
