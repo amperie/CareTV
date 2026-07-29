@@ -24,6 +24,9 @@ const envSchema = z.object({
   CARETV_APPLIANCE_REQUEST_TIMEOUT_MS: millisecondsSchema.default(10000),
   CARETV_APPLIANCE_MEDIA_DIR: z.string().min(1).default(resolve(defaultDataDir, "media")),
   CARETV_APPLIANCE_MEDIA_SCAN_MS: millisecondsSchema.default(30000),
+  CARETV_NOTIFICATION_FORMAT: z.enum(["json", "ntfy"]).default("json"),
+  CARETV_NOTIFICATION_WEBHOOK_URL: z.string().url().optional(),
+  CARETV_REMOTE_SUPPORT_URL: z.string().url().optional(),
   CARETV_SERVER_URL: z.string().url().default("http://127.0.0.1:4010"),
   CARETV_AUTH_TOKEN: z.string().min(16).optional()
 });
@@ -44,6 +47,9 @@ const fileSchema = z
     applianceRequestTimeoutMs: millisecondsSchema.optional(),
     applianceMediaDir: z.string().min(1).optional(),
     applianceMediaScanMs: millisecondsSchema.optional(),
+    notificationFormat: z.enum(["json", "ntfy"]).optional(),
+    notificationWebhookUrl: z.string().url().optional(),
+    remoteSupportUrl: z.string().url().optional(),
     serverUrl: z.string().url().optional(),
     authToken: z.string().min(16).optional()
   })
@@ -65,6 +71,9 @@ export interface CareTvConfig {
   applianceRequestTimeoutMs: number;
   applianceMediaDir: string;
   applianceMediaScanMs: number;
+  notificationFormat: "json" | "ntfy";
+  notificationWebhookUrl?: string;
+  remoteSupportUrl?: string;
   serverUrl: string;
   authToken?: string;
 }
@@ -115,6 +124,13 @@ export function loadConfig(
     applianceRequestTimeoutMs: parsed.data.CARETV_APPLIANCE_REQUEST_TIMEOUT_MS,
     applianceMediaDir: normalizePath(parsed.data.CARETV_APPLIANCE_MEDIA_DIR, cwd),
     applianceMediaScanMs: parsed.data.CARETV_APPLIANCE_MEDIA_SCAN_MS,
+    notificationFormat: parsed.data.CARETV_NOTIFICATION_FORMAT,
+    ...(parsed.data.CARETV_NOTIFICATION_WEBHOOK_URL
+      ? { notificationWebhookUrl: parsed.data.CARETV_NOTIFICATION_WEBHOOK_URL }
+      : {}),
+    ...(parsed.data.CARETV_REMOTE_SUPPORT_URL
+      ? { remoteSupportUrl: parsed.data.CARETV_REMOTE_SUPPORT_URL }
+      : {}),
     serverUrl: parsed.data.CARETV_SERVER_URL.replace(/\/$/, ""),
     ...(parsed.data.CARETV_AUTH_TOKEN ? { authToken: parsed.data.CARETV_AUTH_TOKEN } : {})
   };
@@ -195,6 +211,11 @@ function toEnvConfig(config: Partial<CareTvConfig>): Record<string, unknown> {
     ...(config.applianceMediaScanMs
       ? { CARETV_APPLIANCE_MEDIA_SCAN_MS: config.applianceMediaScanMs }
       : {}),
+    ...(config.notificationFormat ? { CARETV_NOTIFICATION_FORMAT: config.notificationFormat } : {}),
+    ...(config.notificationWebhookUrl
+      ? { CARETV_NOTIFICATION_WEBHOOK_URL: config.notificationWebhookUrl }
+      : {}),
+    ...(config.remoteSupportUrl ? { CARETV_REMOTE_SUPPORT_URL: config.remoteSupportUrl } : {}),
     ...(config.serverUrl ? { CARETV_SERVER_URL: config.serverUrl } : {}),
     ...(config.authToken ? { CARETV_AUTH_TOKEN: config.authToken } : {})
   };

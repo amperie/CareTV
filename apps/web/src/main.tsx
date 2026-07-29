@@ -22,13 +22,15 @@ import {
   Tabs,
   Text,
   TextInput,
-  Title
+  Title,
+  createTheme
 } from "@mantine/core";
 import "@mantine/core/styles.css";
 import {
   IconArrowDown,
   IconArrowUp,
   IconAlertTriangle,
+  IconExternalLink,
   IconLogin2,
   IconPlayerPause,
   IconPlayerPlay,
@@ -46,6 +48,28 @@ import "./styles.css";
 const apiBase = `http://${window.location.hostname}:4010/api/v1`;
 const mediaCacheKey = "caretv.media";
 const playlistCacheKey = "caretv.playlists";
+const theme = createTheme({
+  primaryColor: "sage",
+  colors: {
+    sage: [
+      "#f1f8f4",
+      "#dceee4",
+      "#b9dcc9",
+      "#92c7aa",
+      "#72b391",
+      "#5ca47f",
+      "#4c8f6e",
+      "#3d7158",
+      "#335b49",
+      "#2b4b3d"
+    ]
+  },
+  defaultRadius: "sm",
+  fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+  headings: {
+    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+  }
+});
 
 interface MediaItem {
   id: string;
@@ -69,8 +93,10 @@ interface QueueEntry {
 interface PlaybackStatus {
   appliance?: { applianceId: string; name: string; connected: boolean; lastSeenAt: string };
   events: { id: string; type: string; createdAt: string; details: Record<string, unknown> }[];
+  fallbackEnabled: boolean;
   loopEnabled: boolean;
   queue: QueueEntry[];
+  remoteSupportUrl?: string;
   running: boolean;
   state?: {
     phase: string;
@@ -446,6 +472,17 @@ function App() {
     await refresh();
   }
 
+  async function toggleFallback() {
+    setFallbackMessage("");
+    try {
+      await post("/playback/fallback", { enabled: !status?.fallbackEnabled });
+      setFallbackMessage(`Fallback queue ${status?.fallbackEnabled ? "disabled" : "enabled"}.`);
+    } catch {
+      setFallbackMessage("Fallback setting could not be changed.");
+    }
+    await refresh();
+  }
+
   async function removeQueueEntry(id: string) {
     setQueueMessage("");
     try {
@@ -494,7 +531,7 @@ function App() {
   }
 
   return (
-    <MantineProvider defaultColorScheme="light">
+    <MantineProvider defaultColorScheme="dark" theme={theme}>
       <AppShell header={{ height: 74 }} padding="md">
         <AppShell.Header>
           <Container className="shell-header" fluid>
@@ -504,7 +541,7 @@ function App() {
               </Text>
               <Title order={2}>Playback lab</Title>
             </Box>
-            <Badge color={status?.running ? "teal" : "gray"} size="lg" variant="light">
+            <Badge color={status?.running ? "sage" : "gray"} size="lg" variant="light">
               {status?.appliance?.connected ? status.appliance.name : "No appliance"}
             </Badge>
           </Container>
@@ -522,16 +559,40 @@ function App() {
               >
                 <Group justify="space-between" wrap="wrap">
                   <Text>{playbackIssue.message}</Text>
-                  {playbackIssue.service ? (
-                    <Button
-                      leftSection={<IconLogin2 size={16} />}
-                      size="xs"
-                      variant="light"
-                      onClick={() => void openLogin(playbackIssue.service!)}
-                    >
-                      Open {serviceLabel(playbackIssue.service)} login
-                    </Button>
-                  ) : null}
+                  <Group gap="xs">
+                    {playbackIssue.queueEntryId ? (
+                      <Button
+                        leftSection={<IconRotateClockwise2 size={16} />}
+                        size="xs"
+                        variant="light"
+                        onClick={() => void playQueueEntry(playbackIssue.queueEntryId!)}
+                      >
+                        Retry item
+                      </Button>
+                    ) : null}
+                    {playbackIssue.service ? (
+                      <Button
+                        leftSection={<IconLogin2 size={16} />}
+                        size="xs"
+                        variant="light"
+                        onClick={() => void openLogin(playbackIssue.service!)}
+                      >
+                        Open {serviceLabel(playbackIssue.service)} login
+                      </Button>
+                    ) : null}
+                    {status?.remoteSupportUrl ? (
+                      <Button
+                        component="a"
+                        href={status.remoteSupportUrl}
+                        leftSection={<IconExternalLink size={16} />}
+                        size="xs"
+                        target="_blank"
+                        variant="light"
+                      >
+                        Remote support
+                      </Button>
+                    ) : null}
+                  </Group>
                 </Group>
               </Alert>
             ) : null}
@@ -635,11 +696,14 @@ function App() {
               <Tabs.Panel value="fallback">
                 <FallbackPanel
                   dirty={fallbackDirty}
+                  fallbackEnabled={status?.fallbackEnabled ?? true}
                   items={fallbackItems}
                   message={fallbackMessage}
+                  {...(status?.remoteSupportUrl ? { remoteSupportUrl: status.remoteSupportUrl } : {})}
                   url={fallbackUrl}
                   onAdd={addFallbackItem}
                   onDiscard={() => void discardFallbackChanges()}
+                  onFallbackToggle={() => void toggleFallback()}
                   onMove={moveFallbackItem}
                   onRemove={removeFallbackItem}
                   onSave={() => void saveFallbackQueue()}
@@ -677,7 +741,7 @@ function OutputPanel(props: {
               {props.state?.phase ?? "idle"}
             </Text>
           </Box>
-          <Badge color={props.status?.running ? "teal" : "gray"} variant="light">
+          <Badge color={props.status?.running ? "sage" : "gray"} variant="light">
             {props.status?.running ? "Playback enabled" : "Playback stopped"}
           </Badge>
         </Group>
@@ -688,7 +752,7 @@ function OutputPanel(props: {
           <Text c="gray.4" fw={600}>
             {props.state?.phase ?? "Waiting for queue"}
           </Text>
-          <Progress value={props.progress} color="teal" radius="xl" size="md" />
+          <Progress value={props.progress} color="sage" radius="xl" size="md" />
           <Text c="gray.4" fw={600} size="sm">
             {props.state?.positionSeconds ?? 0}s / {props.state?.durationSeconds ?? 0}s
           </Text>
@@ -727,7 +791,7 @@ function OutputPanel(props: {
             Skip
           </Button>
           <Button
-            color={props.status?.loopEnabled ? "blue" : "gray"}
+            color={props.status?.loopEnabled ? "sage" : "gray"}
             leftSection={<IconRepeat size={16} />}
             variant={props.status?.loopEnabled ? "filled" : "light"}
             onClick={() => props.onLoop()}
@@ -864,7 +928,7 @@ function QueueRow(props: {
           {canPlay ? (
             <ActionIcon
               aria-label="Play this item next"
-              color="teal"
+              color="sage"
               variant="light"
               onClick={() => props.onPlay(props.entry.id)}
             >
@@ -1044,11 +1108,14 @@ function StreamingPanel(props: {
 
 function FallbackPanel(props: {
   dirty: boolean;
+  fallbackEnabled: boolean;
   items: FallbackQueueItem[];
   message: string;
+  remoteSupportUrl?: string;
   url: string;
   onAdd: () => void;
   onDiscard: () => void;
+  onFallbackToggle: () => void;
   onMove: (index: number, direction: "up" | "down") => void;
   onRemove: (index: number) => void;
   onSave: () => void;
@@ -1067,6 +1134,26 @@ function FallbackPanel(props: {
           <Badge color={props.dirty ? "yellow" : "gray"} variant="light">
             {props.dirty ? "Unsaved" : "Saved"}
           </Badge>
+        </Group>
+
+        <Group justify="space-between" wrap="wrap">
+          <Checkbox
+            checked={props.fallbackEnabled}
+            label="Enable fallback queue"
+            onChange={() => props.onFallbackToggle()}
+          />
+          {props.remoteSupportUrl ? (
+            <Button
+              component="a"
+              href={props.remoteSupportUrl}
+              leftSection={<IconExternalLink size={16} />}
+              size="xs"
+              target="_blank"
+              variant="light"
+            >
+              Remote support
+            </Button>
+          ) : null}
         </Group>
 
         {props.message ? (
@@ -1357,11 +1444,11 @@ function scenarioLabel(item: MediaItem | undefined): string {
 }
 
 function statusColor(status: string): string {
-  if (status === "playing" || status === "starting") return "teal";
+  if (status === "playing" || status === "starting") return "sage";
   if (status === "failed") return "red";
-  if (status === "paused") return "blue";
+  if (status === "paused") return "indigo";
   if (status === "skipped" || status === "cancelled") return "gray";
-  return "yellow";
+  return "orange";
 }
 
 function currentPlaybackIssue(
@@ -1370,6 +1457,7 @@ function currentPlaybackIssue(
 ):
   | {
       message: string;
+      queueEntryId?: string;
       service?: "prime" | "youtube";
       title: string;
     }
@@ -1378,7 +1466,12 @@ function currentPlaybackIssue(
 
   if (stateError) {
     const media = status?.state?.mediaItemId ? mediaById.get(status.state.mediaItemId) : undefined;
-    return playbackIssueFor(stateError.code, stateError.message, media);
+    const active = status?.queue.find(
+      (entry) =>
+        entry.mediaItemId === status.state?.mediaItemId &&
+        ["starting", "playing", "paused", "failed"].includes(entry.status)
+    );
+    return playbackIssueFor(stateError.code, stateError.message, media, active?.id);
   }
 
   const failed = status?.queue.find((entry) => entry.status === "failed" && entry.lastErrorCode);
@@ -1387,17 +1480,20 @@ function currentPlaybackIssue(
   return playbackIssueFor(
     failed.lastErrorCode,
     failed.lastErrorMessage ?? "Playback failed.",
-    mediaById.get(failed.mediaItemId)
+    mediaById.get(failed.mediaItemId),
+    failed.id
   );
 }
 
 function playbackIssueFor(
   code: string,
   message: string,
-  media: MediaItem | undefined
+  media: MediaItem | undefined,
+  queueEntryId?: string
 ):
   | {
       message: string;
+      queueEntryId?: string;
       service?: "prime" | "youtube";
       title: string;
     }
@@ -1416,6 +1512,7 @@ function playbackIssueFor(
     ) {
       return {
         message: `${friendlyIssueCode(code)}. Open the YouTube login on the appliance, complete the prompt, then requeue the item.`,
+        ...(queueEntryId ? { queueEntryId } : {}),
         service: "youtube",
         title
       };
@@ -1424,6 +1521,7 @@ function playbackIssueFor(
     if (code === "youtube-consent-required") {
       return {
         message: "YouTube is showing a consent prompt. Open the YouTube login on the appliance and clear the prompt.",
+        ...(queueEntryId ? { queueEntryId } : {}),
         service: "youtube",
         title
       };
@@ -1433,6 +1531,7 @@ function playbackIssueFor(
   if (service === "prime" && code.includes("signin")) {
     return {
       message: `${message} Open the Prime login on the appliance, complete the prompt, then requeue the item.`,
+      ...(queueEntryId ? { queueEntryId } : {}),
       service: "prime",
       title: media?.title ? `Prime needs attention: ${media.title}` : "Prime needs attention"
     };

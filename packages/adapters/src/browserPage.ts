@@ -82,8 +82,11 @@ export class ChromeBrowser {
       `--remote-debugging-port=${this.port()}`,
       `--user-data-dir=${userDataDir}`,
       "--autoplay-policy=no-user-gesture-required",
+      "--disable-infobars",
       "--disable-session-crashed-bubble",
       "--kiosk",
+      "--no-first-run",
+      "--start-fullscreen",
       "about:blank"
     ]);
     this.process.once("exit", () => {
@@ -115,9 +118,9 @@ export async function openLoginBrowser(
   const port = options.remoteDebuggingPort ?? 9223;
   const url = loginUrl(service);
 
-  if (await isDebugPortReady(port)) {
-    const target = await createTarget(port, url);
-    await fetch(`http://127.0.0.1:${port}/json/activate/${target.id}`).catch(() => undefined);
+    if (await isDebugPortReady(port)) {
+      const target = await createTarget(port, url);
+      await fetch(`http://127.0.0.1:${port}/json/activate/${target.id}`).catch(() => undefined);
     return;
   }
 
@@ -128,8 +131,10 @@ export async function openLoginBrowser(
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${userDataDir}`,
     "--autoplay-policy=no-user-gesture-required",
+    "--disable-infobars",
     "--disable-session-crashed-bubble",
     "--new-window",
+    "--no-first-run",
     url
   ]);
   loginProcesses.add(child);

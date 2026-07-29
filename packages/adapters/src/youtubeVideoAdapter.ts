@@ -325,6 +325,7 @@ function forceYouTubeViewport(page: BrowserPage): Promise<void> {
     style.textContent = \`
       html, body {
         background: #000 !important;
+        cursor: none !important;
         margin: 0 !important;
         overflow: hidden !important;
       }

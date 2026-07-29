@@ -80,12 +80,15 @@ app.get("/api/v1/queue", () => queue.list());
 app.get("/api/v1/appliances", () => appliances.list(new Date()));
 app.get("/api/v1/playback/status", () => {
   const appliance = appliances.latest(new Date());
+  const playback = playbackSettings();
   return {
     appliance,
     events: events.listRecent(25),
-    loopEnabled: playbackSettings().loopEnabled,
+    fallbackEnabled: playback.fallbackEnabled,
+    loopEnabled: playback.loopEnabled,
     queue: queue.list(),
-    running: playbackSettings().enabled,
+    remoteSupportUrl: config.values.remoteSupportUrl,
+    running: playback.enabled,
     ...(appliance?.playbackState ? { state: appliance.playbackState } : {})
   };
 });
@@ -565,6 +568,10 @@ app.delete("/api/v1/fallback/youtube/items/:mediaItemId", (request, reply) => {
 });
 
 app.post("/api/v1/appliance/fallback/youtube", (request, reply) => {
+  if (!playbackSettings().fallbackEnabled) {
+    return { entries: [], skipped: "fallback-disabled" };
+  }
+
   const fallbackPlaylist = youtubeFallbackPlaylist();
   const fallbackMediaIds = fallbackPlaylist?.items.map((item) => item.mediaItemId) ?? [];
 
@@ -594,6 +601,9 @@ app.post("/api/v1/appliance/fallback/youtube", (request, reply) => {
     entries.push(entry);
   }
 
+  void notify("YouTube fallback queued", `${entries.length} public fallback video(s) queued.`, {
+    count: entries.length
+  });
   reply.code(201);
   return { entries };
 });
@@ -618,6 +628,10 @@ app.post("/api/v1/playback/stop", () => {
 app.post("/api/v1/playback/loop", (request) => {
   const body = parseBody(request.body);
   return setPlaybackSettings({ loopEnabled: booleanField(body, "enabled", false) });
+});
+app.post("/api/v1/playback/fallback", (request) => {
+  const body = parseBody(request.body);
+  return setPlaybackSettings({ fallbackEnabled: booleanField(body, "enabled", true) });
 });
 app.post("/api/v1/lab/reset", () => {
   const status = setPlaybackSettings({ enabled: false, loopEnabled: false });
@@ -672,6 +686,7 @@ app.post("/api/v1/login/:service", (request, reply) => {
 app.post("/api/v1/appliance/heartbeat", (request) => {
   const body = parseBody(request.body);
   const state = playbackStateField(body.state);
+  reconcileQueueWithApplianceState(state);
   appliances.heartbeat(
     stringField(body, "applianceId", config.values.applianceId),
     stringField(body, "name", config.values.applianceName),
@@ -941,14 +956,20 @@ app.post("/api/v1/appliance/events", (request, reply) => {
 
   const queueEntryId = stringOptional(body.queueEntryId);
   const mediaItemId = stringOptional(body.mediaItemId);
-  events.append({
+  const event = {
     id: stringField(body, "id", crypto.randomUUID()),
     ...(queueEntryId ? { queueEntryId } : {}),
     ...(mediaItemId ? { mediaItemId } : {}),
     type,
     details: objectField(body.details),
     createdAt: stringField(body, "createdAt", new Date().toISOString())
-  });
+  };
+  events.append(event);
+
+  if (type === "FAILED") {
+    void notify("Playback failed", notificationMessage(event), event);
+  }
+
   return { ok: true };
 });
 
@@ -1014,21 +1035,79 @@ function createQueueEntry(mediaItemId: string): QueueEntry {
   };
 }
 
-function playbackSettings(): { enabled: boolean; loopEnabled: boolean } {
+interface PlaybackSettings {
+  enabled: boolean;
+  fallbackEnabled: boolean;
+  loopEnabled: boolean;
+}
+
+function playbackSettings(): PlaybackSettings {
   const stored = settings.get("playback") ?? {};
   return {
     enabled: booleanField(stored, "enabled", false),
+    fallbackEnabled: booleanField(stored, "fallbackEnabled", true),
     loopEnabled: booleanField(stored, "loopEnabled", false)
   };
 }
 
-function setPlaybackSettings(patch: Partial<{ enabled: boolean; loopEnabled: boolean }>): {
-  enabled: boolean;
-  loopEnabled: boolean;
-} {
+function setPlaybackSettings(patch: Partial<PlaybackSettings>): PlaybackSettings {
   const next = { ...playbackSettings(), ...patch };
   settings.set("playback", next, new Date().toISOString());
   return next;
+}
+
+function reconcileQueueWithApplianceState(state: PlaybackState | undefined): void {
+  if (!state || (state.phase !== "idle" && state.phase !== "failed")) {
+    return;
+  }
+
+  const reconciled = queue.reconcileStaleActive(
+    state.phase === "failed" ? "failed" : "skipped",
+    state.phase === "failed" ? "appliance-failed" : "appliance-idle"
+  );
+
+  if (reconciled > 0) {
+    app.log.warn({ reconciled, phase: state.phase }, "Reconciled stale active queue entries");
+  }
+}
+
+async function notify(
+  title: string,
+  message: string,
+  details: Record<string, unknown> = {}
+): Promise<void> {
+  const url = config.values.notificationWebhookUrl;
+  if (!url) return;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const isNtfy = config.values.notificationFormat === "ntfy";
+    const response = await fetch(url, {
+      body: isNtfy ? message : JSON.stringify({ details, message, title }),
+      headers: isNtfy
+        ? { title }
+        : { "content-type": "application/json" },
+      method: "POST",
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      app.log.warn({ status: response.status }, "Notification webhook failed");
+    }
+  } catch (error) {
+    app.log.warn(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      "Notification webhook failed"
+    );
+  }
+}
+
+function notificationMessage(event: { details: Record<string, unknown>; mediaItemId?: string }) {
+  const item = event.mediaItemId ? media.get(event.mediaItemId) : undefined;
+  const code = stringOptional(event.details.code) ?? "unknown";
+  return `${item?.title ?? "Playback item"} failed: ${code}`;
 }
 
 function routeParam(params: unknown, key: string): string {

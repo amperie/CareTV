@@ -26,6 +26,17 @@ let state: PlaybackState = createIdleState();
 let nextHeartbeatAt = 0;
 let nextMediaScanAt = 0;
 let backgroundHeartbeatInFlight = false;
+let playbackSettings: PlaybackSettings = {
+  enabled: false,
+  fallbackEnabled: true,
+  loopEnabled: false
+};
+
+interface PlaybackSettings {
+  enabled: boolean;
+  fallbackEnabled: boolean;
+  loopEnabled: boolean;
+}
 
 async function main(): Promise<void> {
   console.log(
@@ -203,12 +214,11 @@ async function backgroundHeartbeat(): Promise<void> {
   }
 }
 
-async function pollPlaybackSettings(): Promise<
-  { enabled: boolean; loopEnabled: boolean } | undefined
-> {
+async function pollPlaybackSettings(): Promise<PlaybackSettings | undefined> {
   try {
     await heartbeat();
-    return await client.playbackSettings();
+    playbackSettings = await client.playbackSettings();
+    return playbackSettings;
   } catch (error) {
     console.warn(
       JSON.stringify({
@@ -445,7 +455,7 @@ async function applyObservation(
         await apply({ type: "RECOVERING", attempt: state.recoveryAttempt + 1 });
         return undefined;
       }
-      if (shouldQueueYouTubeFallback(observation.errorCode)) {
+      if (playbackSettings.fallbackEnabled && shouldQueueYouTubeFallback(observation.errorCode)) {
         await client.queueYouTubeFallback().catch((error) =>
           console.warn(
             JSON.stringify({
@@ -563,7 +573,7 @@ class ServerClient {
   ) {}
 
   public heartbeat(applianceId: string, name: string, playbackState: PlaybackState) {
-    return this.post<{ playback: { enabled: boolean; loopEnabled: boolean } }>(
+    return this.post<{ playback: PlaybackSettings }>(
       "/api/v1/appliance/heartbeat",
       {
         applianceId,
@@ -574,7 +584,7 @@ class ServerClient {
   }
 
   public playbackSettings() {
-    return this.get<{ enabled: boolean; loopEnabled: boolean }>("/api/v1/appliance/playback");
+    return this.get<PlaybackSettings>("/api/v1/appliance/playback");
   }
 
   public syncMediaInventory(applianceId: string, items: LocalMediaInventoryItem[]) {

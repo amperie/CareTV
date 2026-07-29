@@ -134,11 +134,12 @@ describe("config", () => {
         applianceHeartbeatMs: 5000,
         appliancePlaybackObserveMs: 1000,
         applianceRequestTimeoutMs: 10000,
-        applianceMediaDir: "media",
-        applianceMediaScanMs: 30000,
-        serverUrl: "http://127.0.0.1:4010",
-        authToken: "0123456789abcdef"
-      })
+      applianceMediaDir: "media",
+      applianceMediaScanMs: 30000,
+      notificationFormat: "json",
+      serverUrl: "http://127.0.0.1:4010",
+      authToken: "0123456789abcdef"
+    })
     ).toMatchObject({ authToken: "[redacted]" });
   });
 });

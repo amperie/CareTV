@@ -1,24 +1,89 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
-  background: var(--mantine-color-gray-0);
+  background:
+    linear-gradient(180deg, #171714 0%, #11110f 44%, #0c0d0b 100%);
   margin: 0;
 }
 
 .shell-header {
   align-items: center;
+  background: rgb(17 17 15 / 94%);
+  border-bottom: 1px solid rgb(255 255 255 / 8%);
   display: flex;
   height: 100%;
   justify-content: space-between;
+  padding-inline: 8px;
+}
+
+.mantine-AppShell-main {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 3%), transparent 220px),
+    #0c0d0b;
+}
+
+.mantine-Card-root,
+.mantine-Paper-root {
+  background: rgb(28 29 25 / 86%);
+  border-color: rgb(255 255 255 / 9%);
+  box-shadow: 0 14px 42px rgb(0 0 0 / 22%);
+}
+
+.mantine-Button-root {
+  font-weight: 700;
+}
+
+.mantine-Button-root[data-variant="light"],
+.mantine-ActionIcon-root[data-variant="light"] {
+  background: rgb(255 255 255 / 7%);
+  border: 1px solid rgb(255 255 255 / 8%);
+}
+
+.mantine-Button-root[data-variant="light"]:hover,
+.mantine-ActionIcon-root[data-variant="light"]:hover {
+  background: rgb(255 255 255 / 11%);
+}
+
+.mantine-Tabs-list {
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.mantine-Tabs-tab {
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.mantine-Tabs-tab[data-active] {
+  background: rgb(92 164 127 / 20%);
+  border-color: rgb(92 164 127 / 28%);
+  color: #cbe7d5;
+}
+
+.mantine-Table-tr {
+  border-color: rgb(255 255 255 / 7%);
+}
+
+.mantine-TextInput-input {
+  background: rgb(10 11 10 / 82%);
+  border-color: rgb(255 255 255 / 12%);
+}
+
+.mantine-Alert-root {
+  border: 1px solid rgb(255 255 255 / 10%);
 }
 
 .screen {
   align-content: center;
   background:
-    radial-gradient(circle at 80% 15%, rgb(20 184 166 / 18%), transparent 32%),
-    linear-gradient(135deg, #0b1120, #111827 54%, #020617);
+    radial-gradient(circle at 85% 18%, rgb(92 164 127 / 22%), transparent 28%),
+    radial-gradient(circle at 12% 72%, rgb(181 137 63 / 14%), transparent 34%),
+    linear-gradient(135deg, #050605, #171915 55%, #050505);
+  border: 1px solid rgb(255 255 255 / 10%);
   color: #fff;
   display: grid;
   gap: 12px;
@@ -27,7 +92,7 @@ body {
 }
 
 .screen-title {
-  color: #fff;
+  color: #f1f3ec;
   line-height: 1.04;
   overflow-wrap: anywhere;
 }
@@ -37,7 +102,11 @@ body {
 }
 
 .media-row-card {
-  background: var(--mantine-color-gray-0);
+  background: rgb(19 20 17 / 78%);
+}
+
+.mantine-Badge-root[data-variant="light"] {
+  background: rgb(255 255 255 / 8%);
 }
 
 @media (max-width: 620px) {
