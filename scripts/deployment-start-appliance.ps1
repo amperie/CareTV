@@ -2,8 +2,11 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
+$configPath = Join-Path $repoRoot "caretv.config.json"
 
-$env:CARETV_SERVER_URL = if ($env:CARETV_SERVER_URL) { $env:CARETV_SERVER_URL } else { "http://w11.lan:4010" }
+if (-not $env:CARETV_SERVER_URL -and -not (Test-Path $configPath)) {
+  $env:CARETV_SERVER_URL = "http://w11.lan:4010"
+}
 
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
   pnpm dev:appliance

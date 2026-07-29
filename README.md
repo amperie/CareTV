@@ -205,10 +205,80 @@ has permissive CORS and no production authentication layer.
 
 ### Appliance side
 
-Run this on the TV-connected Windows appliance:
+The easiest current appliance deployment is a source checkout. This is prototype-grade: it runs the
+TypeScript workspace through pnpm instead of a packaged executable or Windows service.
+
+Install prerequisites on the TV-connected Windows appliance:
+
+- Node.js LTS from `https://nodejs.org/`
+- Git from `https://git-scm.com/`
+- Google Chrome
+
+Corepack ships with Node.js. It provides the pinned pnpm version used by this repo. Open PowerShell
+as Administrator once and enable pnpm:
 
 ```powershell
-.\scripts\start-appliance.ps1
+node --version
+corepack --version
+corepack enable
+corepack prepare pnpm@9.15.4 --activate
+pnpm --version
+```
+
+If `corepack enable` fails with `EPERM` under `C:\Program Files\nodejs`, reopen PowerShell as
+Administrator and run it again.
+
+If `pnpm --version` fails because `pnpm.ps1` cannot be loaded, allow local user scripts:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+pnpm --version
+```
+
+If changing the execution policy is not acceptable, use the command shim explicitly:
+
+```powershell
+pnpm.cmd --version
+pnpm.cmd install
+```
+
+Then clone the repo, install dependencies, and create the appliance config:
+
+```powershell
+git clone <repo-url> C:\CareTV\app
+cd C:\CareTV\app
+pnpm install
+
+Copy-Item caretv.config.example.json caretv.config.json
+notepad caretv.config.json
+```
+
+Set appliance-specific values in `caretv.config.json`:
+
+```json
+{
+  "serverUrl": "http://w11.lan:4010",
+  "applianceId": "living-room-tv",
+  "applianceName": "Living Room TV",
+  "chromeProfileDir": "C:\\CareTV\\chrome-profile",
+  "applianceMediaDir": "C:\\CareTV\\media"
+}
+```
+
+The appliance start scripts read `caretv.config.json` from the repo root. An explicit
+`CARETV_SERVER_URL` environment variable still overrides the file, but the scripts do not set that
+variable when `caretv.config.json` exists.
+
+Start the appliance manually:
+
+```powershell
+.\scripts\deployment-start-appliance.ps1
+```
+
+After manual startup works, install the logon scheduled task:
+
+```powershell
+.\scripts\deployment-install-appliance-logon-task.ps1
 ```
 
 Appliance-side responsibilities:
