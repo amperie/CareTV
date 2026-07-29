@@ -265,9 +265,10 @@ Set appliance-specific values in `caretv.config.json`:
 }
 ```
 
-The appliance start scripts read `caretv.config.json` from the repo root. An explicit
-`CARETV_SERVER_URL` environment variable still overrides the file, but the scripts do not set that
-variable when `caretv.config.json` exists.
+The appliance start scripts pass the repo-root `caretv.config.json` through `CARETV_CONFIG_FILE`.
+This is required because pnpm runs the appliance package with `apps/appliance-agent` as its working
+directory. An explicit `CARETV_SERVER_URL` environment variable still overrides the file, but the
+scripts do not set that variable when `caretv.config.json` exists.
 
 Start the appliance manually:
 
