@@ -1,5 +1,44 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  ActionIcon,
+  Alert,
+  AppShell,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Checkbox,
+  Container,
+  FileButton,
+  Grid,
+  Group,
+  MantineProvider,
+  Paper,
+  Progress,
+  ScrollArea,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  TextInput,
+  Title
+} from "@mantine/core";
+import "@mantine/core/styles.css";
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconLogin2,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconPlayerSkipForward,
+  IconPlus,
+  IconRepeat,
+  IconRotateClockwise2,
+  IconSearch,
+  IconTrash,
+  IconUpload
+} from "@tabler/icons-react";
 
 import "./styles.css";
 
@@ -363,106 +402,128 @@ function App() {
   }
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">CareTV</p>
-          <h1>Fake playback lab</h1>
-        </div>
-        <div className={status?.running ? "status running" : "status"}>
-          {status?.appliance?.connected ? status.appliance.name : "No appliance"}
-        </div>
-      </header>
+    <MantineProvider defaultColorScheme="light">
+      <AppShell header={{ height: 74 }} padding="md">
+        <AppShell.Header>
+          <Container className="shell-header" fluid>
+            <Box>
+              <Text c="dimmed" fw={700} size="xs" tt="uppercase">
+                CareTV
+              </Text>
+              <Title order={2}>Playback lab</Title>
+            </Box>
+            <Badge color={status?.running ? "teal" : "gray"} size="lg" variant="light">
+              {status?.appliance?.connected ? status.appliance.name : "No appliance"}
+            </Badge>
+          </Container>
+        </AppShell.Header>
 
-      <nav className="tabs" aria-label="Dashboard sections">
-        {(["main", "media", "events"] as DashboardTab[]).map((tab) => (
-          <button
-            className={activeTab === tab ? "tab active" : "tab"}
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tabLabel(tab)}
-          </button>
-        ))}
-      </nav>
+        <AppShell.Main>
+          <Container fluid maw={1480}>
+            <Tabs value={activeTab} onChange={(value) => setActiveTab(value as DashboardTab)}>
+              <Tabs.List mb="md">
+                <Tabs.Tab value="main">Main</Tabs.Tab>
+                <Tabs.Tab value="media">Media</Tabs.Tab>
+                <Tabs.Tab value="events">Events</Tabs.Tab>
+              </Tabs.List>
 
-      {activeTab === "main" ? (
-        <section className="layout">
-          <OutputPanel
-            progress={progress}
-            state={state}
-            status={status}
-            onCommand={(type) => void sendCommand(type)}
-            onLoop={() => void toggleLoop()}
-            onStart={() => void startPlayback()}
-            onStop={() => void stopPlayback()}
-          />
-          <QueuePanel
-            mediaById={mediaById}
-            message={queueMessage}
-            queuedIds={queuedIds}
-            status={status}
-            onClearCompleted={() => void clearCompleted()}
-            onMove={(id, direction) => void moveQueueEntry(id, direction)}
-            onPlay={(id) => void playQueueEntry(id)}
-            onRemove={(id) => void removeQueueEntry(id)}
-            onReset={() => void resetLab()}
-          />
-        </section>
-      ) : activeTab === "media" ? (
-        <section className="media-layout">
-          {queueMessage ? <p className="queue-message media-message">{queueMessage}</p> : null}
-          <MediaPanel
-            discoveredMedia={discoveredMedia}
-            mediaSearch={mediaSearch}
-            playlistMediaIds={playlistMediaIds}
-            uploading={uploading}
-            onDelete={(id) => void deleteMedia(id)}
-            onEnqueue={(id) => void enqueueMedia(id)}
-            onSearchChange={setMediaSearch}
-            onTogglePlaylistMedia={togglePlaylistMedia}
-            onUpload={(file) => void uploadMedia(file)}
-          />
-          <StreamingPanel
-            streamingUrl={streamingUrl}
-            onAdd={() => void addStreamingItem()}
-            onLogin={(service) => void openLogin(service)}
-            onUrlChange={setStreamingUrl}
-          />
-          <PlaylistBuilder
-            editing={Boolean(editingPlaylistId)}
-            mediaById={mediaById}
-            name={playlistName}
-            selectedIds={playlistMediaIds}
-            onClear={clearPlaylistBuilder}
-            onNameChange={setPlaylistName}
-            onRemove={togglePlaylistMedia}
-            onSave={() => void savePlaylist()}
-          />
-          <PlaylistList
-            mediaById={mediaById}
-            message=""
-            playlists={playlists}
-            onDelete={(id) => void deletePlaylist(id)}
-            onEdit={editPlaylist}
-            onQueue={(id) => void queuePlaylist(id)}
-          />
-          <QueuePanel
-            mediaById={mediaById}
-            message={queueMessage}
-            queuedIds={queuedIds}
-            status={status}
-            onClearCompleted={() => void clearCompleted()}
-            onMove={(id, direction) => void moveQueueEntry(id, direction)}
-            onPlay={(id) => void playQueueEntry(id)}
-            onRemove={(id) => void removeQueueEntry(id)}
-            onReset={() => void resetLab()}
-          />
-        </section>
-      ) : (
-        <EventsPanel status={status} />
-      )}
-    </main>
+              <Tabs.Panel value="main">
+                <Stack gap="md">
+                  <OutputPanel
+                    progress={progress}
+                    state={state}
+                    status={status}
+                    onCommand={(type) => void sendCommand(type)}
+                    onLoop={() => void toggleLoop()}
+                    onStart={() => void startPlayback()}
+                    onStop={() => void stopPlayback()}
+                  />
+                  <QueuePanel
+                    mediaById={mediaById}
+                    message={queueMessage}
+                    queuedIds={queuedIds}
+                    status={status}
+                    onClearCompleted={() => void clearCompleted()}
+                    onMove={(id, direction) => void moveQueueEntry(id, direction)}
+                    onPlay={(id) => void playQueueEntry(id)}
+                    onRemove={(id) => void removeQueueEntry(id)}
+                    onReset={() => void resetLab()}
+                  />
+                </Stack>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="media">
+                <Stack gap="md">
+                  {queueMessage ? (
+                    <Alert color="yellow" variant="light">
+                      {queueMessage}
+                    </Alert>
+                  ) : null}
+                  <Grid>
+                    <Grid.Col span={{ base: 12, lg: 7 }}>
+                      <MediaPanel
+                        discoveredMedia={discoveredMedia}
+                        mediaSearch={mediaSearch}
+                        playlistMediaIds={playlistMediaIds}
+                        uploading={uploading}
+                        onDelete={(id) => void deleteMedia(id)}
+                        onEnqueue={(id) => void enqueueMedia(id)}
+                        onSearchChange={setMediaSearch}
+                        onTogglePlaylistMedia={togglePlaylistMedia}
+                        onUpload={(file) => void uploadMedia(file)}
+                      />
+                    </Grid.Col>
+                    <Grid.Col span={{ base: 12, lg: 5 }}>
+                      <Stack gap="md">
+                        <StreamingPanel
+                          streamingUrl={streamingUrl}
+                          onAdd={() => void addStreamingItem()}
+                          onLogin={(service) => void openLogin(service)}
+                          onUrlChange={setStreamingUrl}
+                        />
+                        <PlaylistBuilder
+                          editing={Boolean(editingPlaylistId)}
+                          mediaById={mediaById}
+                          name={playlistName}
+                          selectedIds={playlistMediaIds}
+                          onClear={clearPlaylistBuilder}
+                          onNameChange={setPlaylistName}
+                          onRemove={togglePlaylistMedia}
+                          onSave={() => void savePlaylist()}
+                        />
+                        <PlaylistList
+                          mediaById={mediaById}
+                          message=""
+                          playlists={playlists}
+                          onDelete={(id) => void deletePlaylist(id)}
+                          onEdit={editPlaylist}
+                          onQueue={(id) => void queuePlaylist(id)}
+                        />
+                      </Stack>
+                    </Grid.Col>
+                  </Grid>
+                  <QueuePanel
+                    mediaById={mediaById}
+                    message={queueMessage}
+                    queuedIds={queuedIds}
+                    status={status}
+                    onClearCompleted={() => void clearCompleted()}
+                    onMove={(id, direction) => void moveQueueEntry(id, direction)}
+                    onPlay={(id) => void playQueueEntry(id)}
+                    onRemove={(id) => void removeQueueEntry(id)}
+                    onReset={() => void resetLab()}
+                  />
+                </Stack>
+              </Tabs.Panel>
+
+              <Tabs.Panel value="events">
+                <EventsPanel status={status} />
+              </Tabs.Panel>
+            </Tabs>
+          </Container>
+        </AppShell.Main>
+      </AppShell>
+    </MantineProvider>
   );
 }
 
@@ -476,47 +537,83 @@ function OutputPanel(props: {
   onStop: () => void;
 }) {
   return (
-    <div className="panel output">
-      <div className="output-header">
-        <h2>{props.state?.title ?? "Nothing playing"}</h2>
-        <span>{props.state?.phase ?? "idle"}</span>
-      </div>
-      <div className="screen">
-        <div className="screen-title">{props.state?.title ?? "CareTV output"}</div>
-        <div className="screen-phase">{props.state?.phase ?? "Waiting for queue"}</div>
-        <div className="progress">
-          <div style={{ width: `${props.progress}%` }} />
-        </div>
-        <div className="time">
-          {props.state?.positionSeconds ?? 0}s / {props.state?.durationSeconds ?? 0}s
-        </div>
-      </div>
-      {props.state?.error ? (
-        <p className="error">
-          {props.state.error.code}: {props.state.error.message}
-        </p>
-      ) : null}
-      <div className="button-row">
-        <button onClick={() => props.onStart()}>Start</button>
-        <button onClick={() => props.onCommand("pause")}>Pause</button>
-        <button onClick={() => props.onCommand("resume")}>Resume</button>
-        <button onClick={() => props.onCommand("restart")}>Rewind</button>
-        <button onClick={() => props.onCommand("skip")}>Skip</button>
-        <button
-          className={props.status?.loopEnabled ? "toggle active" : "toggle"}
-          onClick={() => props.onLoop()}
-        >
-          Loop
-        </button>
-        <button onClick={() => props.onStop()}>Stop</button>
-      </div>
-      <p className="appliance-line">
-        {props.status?.running ? "Playback enabled" : "Playback stopped"} /{" "}
-        {props.status?.appliance?.connected
-          ? `connected ${new Date(props.status.appliance.lastSeenAt).toLocaleTimeString()}`
-          : "appliance offline"}
-      </p>
-    </div>
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="md">
+        <Group justify="space-between" align="start">
+          <Box>
+            <Title order={3}>{props.state?.title ?? "Nothing playing"}</Title>
+            <Text c="dimmed" size="sm">
+              {props.state?.phase ?? "idle"}
+            </Text>
+          </Box>
+          <Badge color={props.status?.running ? "teal" : "gray"} variant="light">
+            {props.status?.running ? "Playback enabled" : "Playback stopped"}
+          </Badge>
+        </Group>
+        <Paper className="screen" radius="md" p="xl">
+          <Title className="screen-title" order={1}>
+            {props.state?.title ?? "CareTV output"}
+          </Title>
+          <Text c="gray.4" fw={600}>
+            {props.state?.phase ?? "Waiting for queue"}
+          </Text>
+          <Progress value={props.progress} color="teal" radius="xl" size="md" />
+          <Text c="gray.4" fw={600} size="sm">
+            {props.state?.positionSeconds ?? 0}s / {props.state?.durationSeconds ?? 0}s
+          </Text>
+        </Paper>
+        {props.state?.error ? (
+          <Alert color="red" variant="light">
+            {props.state.error.code}: {props.state.error.message}
+          </Alert>
+        ) : null}
+        <Group gap="xs">
+          <Button leftSection={<IconPlayerPlay size={16} />} onClick={() => props.onStart()}>
+            Start
+          </Button>
+          <Button
+            leftSection={<IconPlayerPause size={16} />}
+            variant="light"
+            onClick={() => props.onCommand("pause")}
+          >
+            Pause
+          </Button>
+          <Button variant="light" onClick={() => props.onCommand("resume")}>
+            Resume
+          </Button>
+          <Button
+            leftSection={<IconRotateClockwise2 size={16} />}
+            variant="light"
+            onClick={() => props.onCommand("restart")}
+          >
+            Rewind
+          </Button>
+          <Button
+            leftSection={<IconPlayerSkipForward size={16} />}
+            variant="light"
+            onClick={() => props.onCommand("skip")}
+          >
+            Skip
+          </Button>
+          <Button
+            color={props.status?.loopEnabled ? "blue" : "gray"}
+            leftSection={<IconRepeat size={16} />}
+            variant={props.status?.loopEnabled ? "filled" : "light"}
+            onClick={() => props.onLoop()}
+          >
+            Loop
+          </Button>
+          <Button color="red" variant="light" onClick={() => props.onStop()}>
+            Stop
+          </Button>
+        </Group>
+        <Text c="dimmed" fw={600} size="sm">
+          {props.status?.appliance?.connected
+            ? `Connected ${new Date(props.status.appliance.lastSeenAt).toLocaleTimeString()}`
+            : "Appliance offline"}
+        </Text>
+      </Stack>
+    </Card>
   );
 }
 
@@ -532,38 +629,61 @@ function QueuePanel(props: {
   onReset: () => void;
 }) {
   return (
-    <div className="panel queue">
-      <div className="section-header">
-        <h2>Queue {props.status?.queue.length ? `(${props.status.queue.length})` : ""}</h2>
-        <div className="header-actions">
-          <button className="compact secondary" onClick={() => props.onClearCompleted()}>
-            Clear done
-          </button>
-          <button className="compact danger" onClick={() => props.onReset()}>
-            Reset lab
-          </button>
-        </div>
-      </div>
-      {props.message ? <p className="queue-message">{props.message}</p> : null}
-      <div className="rows">
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Group gap="xs">
+            <Title order={3}>Queue</Title>
+            {props.status?.queue.length ? (
+              <Badge variant="light">{props.status.queue.length}</Badge>
+            ) : null}
+          </Group>
+          <Group gap="xs">
+            <Button size="xs" variant="light" onClick={() => props.onClearCompleted()}>
+              Clear done
+            </Button>
+            <Button color="red" size="xs" variant="light" onClick={() => props.onReset()}>
+              Reset lab
+            </Button>
+          </Group>
+        </Group>
+        {props.message ? (
+          <Alert color="yellow" variant="light">
+            {props.message}
+          </Alert>
+        ) : null}
         {props.status?.queue.length ? (
-          props.status.queue.map((entry) => (
-            <QueueRow
-              entry={entry}
-              key={entry.id}
-              media={props.mediaById.get(entry.mediaItemId)}
-              queuedIds={props.queuedIds}
-              running={Boolean(props.status?.running)}
-              onMove={props.onMove}
-              onPlay={props.onPlay}
-              onRemove={props.onRemove}
-            />
-          ))
+          <ScrollArea.Autosize mah={520}>
+            <Table highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Title</Table.Th>
+                  <Table.Th>Source</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th ta="right">Actions</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {props.status.queue.map((entry) => (
+                  <QueueRow
+                    entry={entry}
+                    key={entry.id}
+                    media={props.mediaById.get(entry.mediaItemId)}
+                    queuedIds={props.queuedIds}
+                    running={Boolean(props.status?.running)}
+                    onMove={props.onMove}
+                    onPlay={props.onPlay}
+                    onRemove={props.onRemove}
+                  />
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea.Autosize>
         ) : (
-          <p className="muted">No queued items yet.</p>
+          <Text c="dimmed">No queued items yet.</Text>
         )}
-      </div>
-    </div>
+      </Stack>
+    </Card>
   );
 }
 
@@ -585,57 +705,74 @@ function QueueRow(props: {
     : "Only queued items with a queued neighbor can move.";
 
   return (
-    <div className="row">
-      <div>
-        <strong>{props.media?.title ?? props.entry.mediaItemId}</strong>
-        <span>
-          #{props.entry.position} - {scenarioLabel(props.media)}
-        </span>
+    <Table.Tr>
+      <Table.Td>
+        <Text fw={600}>{props.media?.title ?? props.entry.mediaItemId}</Text>
+        <Text c="dimmed" size="sm">
+          #{props.entry.position}
+        </Text>
         {props.entry.lastErrorCode ? (
-          <small>
+          <Text c="red" size="sm">
             {props.entry.lastErrorCode}
             {props.entry.lastErrorMessage ? `: ${props.entry.lastErrorMessage}` : ""}
-          </small>
+          </Text>
         ) : null}
-      </div>
-      {canPlay || props.entry.status === "queued" ? (
-        <div className="row-actions">
+      </Table.Td>
+      <Table.Td>
+        <Badge color="gray" variant="light">
+          {scenarioLabel(props.media)}
+        </Badge>
+      </Table.Td>
+      <Table.Td>
+        <Badge color={statusColor(props.entry.status)} variant="light">
+          {props.entry.status}
+        </Badge>
+      </Table.Td>
+      <Table.Td>
+        <Group gap={4} justify="flex-end" wrap="nowrap">
           {canPlay ? (
-            <button
-              className="icon-button play"
+            <ActionIcon
+              aria-label="Play this item next"
+              color="teal"
+              variant="light"
               onClick={() => props.onPlay(props.entry.id)}
-              title="Play this item next"
             >
-              Play
-            </button>
+              <IconPlayerPlay size={16} />
+            </ActionIcon>
           ) : null}
           {props.entry.status === "queued" ? (
             <>
-              <button
-                className="icon-button"
+              <ActionIcon
+                aria-label="Move up"
                 disabled={props.running || !canMoveUp}
-                onClick={() => props.onMove(props.entry.id, "up")}
                 title={canMoveUp && !props.running ? "Move up" : disabledReason}
+                variant="light"
+                onClick={() => props.onMove(props.entry.id, "up")}
               >
-                Up
-              </button>
-              <button
-                className="icon-button"
+                <IconArrowUp size={16} />
+              </ActionIcon>
+              <ActionIcon
+                aria-label="Move down"
                 disabled={props.running || !canMoveDown}
-                onClick={() => props.onMove(props.entry.id, "down")}
                 title={canMoveDown && !props.running ? "Move down" : disabledReason}
+                variant="light"
+                onClick={() => props.onMove(props.entry.id, "down")}
               >
-                Down
-              </button>
-              <button className="icon-button danger" onClick={() => props.onRemove(props.entry.id)}>
-                Remove
-              </button>
+                <IconArrowDown size={16} />
+              </ActionIcon>
+              <ActionIcon
+                aria-label="Remove"
+                color="red"
+                variant="light"
+                onClick={() => props.onRemove(props.entry.id)}
+              >
+                <IconTrash size={16} />
+              </ActionIcon>
             </>
           ) : null}
-        </div>
-      ) : null}
-      <span className={`badge ${props.entry.status}`}>{props.entry.status}</span>
-    </div>
+        </Group>
+      </Table.Td>
+    </Table.Tr>
   );
 }
 
@@ -651,71 +788,86 @@ function MediaPanel(props: {
   onUpload: (file: File | undefined) => void;
 }) {
   return (
-    <div className="panel media-panel">
-      <div className="section-header">
-        <h2>Discovered media</h2>
-        <label className={props.uploading ? "upload-button disabled" : "upload-button"}>
-          Upload
-          <input
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Title order={3}>Discovered media</Title>
+          <FileButton
             accept="video/*,.mkv,.avi"
-            disabled={props.uploading}
-            type="file"
-            onChange={(event) => {
-              props.onUpload(event.target.files?.[0]);
-              event.currentTarget.value = "";
-            }}
-          />
-        </label>
-      </div>
-      <input
-        aria-label="Search discovered media"
-        placeholder="Search discovered media"
-        value={props.mediaSearch}
-        onChange={(event) => props.onSearchChange(event.target.value)}
-      />
-      <div className="rows">
+            onChange={(file) => props.onUpload(file ?? undefined)}
+          >
+            {(fileProps) => (
+              <Button
+                {...fileProps}
+                leftSection={<IconUpload size={16} />}
+                loading={props.uploading}
+                size="xs"
+                variant="light"
+              >
+                Upload
+              </Button>
+            )}
+          </FileButton>
+        </Group>
+        <TextInput
+          leftSection={<IconSearch size={16} />}
+          placeholder="Search discovered media"
+          value={props.mediaSearch}
+          onChange={(event) => props.onSearchChange(event.currentTarget.value)}
+        />
         {props.discoveredMedia.length ? (
-          props.discoveredMedia.map((item) => (
-            <div className="row media-row" key={item.id}>
-              <label className="check-row">
-                <input
-                  checked={props.playlistMediaIds.includes(item.id)}
-                  type="checkbox"
-                  onChange={() => props.onTogglePlaylistMedia(item.id)}
-                />
-              </label>
-              <div>
-                <strong>{item.title}</strong>
-                <span>{mediaSourceLabel(item)}</span>
-              </div>
-              <div className="row-actions">
-                <button
-                  className="compact"
-                  disabled={item.service === "local" && !item.localPath}
-                  onClick={() => props.onEnqueue(item.id)}
-                  title={
-                    item.service !== "local" || item.localPath
-                      ? "Add to queue"
-                      : "Waiting for appliance download"
-                  }
-                >
-                  Queue
-                </button>
-                <button
-                  className="compact danger"
-                  onClick={() => props.onDelete(item.id)}
-                  title="Remove this media from the catalog"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))
+          <ScrollArea.Autosize mah={520}>
+            <Stack gap="xs">
+              {props.discoveredMedia.map((item) => (
+                <Paper className="media-row-card" key={item.id} p="sm" radius="md" withBorder>
+                  <Group align="center" justify="space-between" wrap="nowrap">
+                    <Group gap="sm" wrap="nowrap">
+                      <Checkbox
+                        aria-label={`Add ${item.title} to playlist`}
+                        checked={props.playlistMediaIds.includes(item.id)}
+                        onChange={() => props.onTogglePlaylistMedia(item.id)}
+                      />
+                      <Box className="truncate">
+                        <Text fw={600} truncate="end">
+                          {item.title}
+                        </Text>
+                        <Text c="dimmed" size="sm" truncate="end">
+                          {mediaSourceLabel(item)}
+                        </Text>
+                      </Box>
+                    </Group>
+                    <Group gap={6} wrap="nowrap">
+                      <Button
+                        disabled={item.service === "local" && !item.localPath}
+                        size="xs"
+                        title={
+                          item.service !== "local" || item.localPath
+                            ? "Add to queue"
+                            : "Waiting for appliance download"
+                        }
+                        onClick={() => props.onEnqueue(item.id)}
+                      >
+                        Queue
+                      </Button>
+                      <ActionIcon
+                        aria-label="Delete media"
+                        color="red"
+                        variant="light"
+                        onClick={() => props.onDelete(item.id)}
+                      >
+                        <IconTrash size={16} />
+                      </ActionIcon>
+                    </Group>
+                  </Group>
+                </Paper>
+              ))}
+            </Stack>
+          </ScrollArea.Autosize>
         ) : (
-          <p className="muted">No discovered media matches.</p>
+          <Text c="dimmed">No discovered media matches.</Text>
         )}
-      </div>
-    </div>
+      </Stack>
+    </Card>
   );
 }
 
@@ -726,26 +878,36 @@ function StreamingPanel(props: {
   onUrlChange: (value: string) => void;
 }) {
   return (
-    <div className="panel prime-panel">
-      <h2>Add streaming item</h2>
-      <label>
-        URL
-        <input
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Title order={3}>Add streaming item</Title>
+        <TextInput
+          label="URL"
           placeholder="YouTube or Amazon Prime Video URL"
           value={props.streamingUrl}
-          onChange={(event) => props.onUrlChange(event.target.value)}
+          onChange={(event) => props.onUrlChange(event.currentTarget.value)}
         />
-      </label>
-      <button onClick={() => props.onAdd()}>Add to queue</button>
-      <div className="button-row compact-row">
-        <button className="secondary" onClick={() => props.onLogin("youtube")}>
-          YouTube login
-        </button>
-        <button className="secondary" onClick={() => props.onLogin("prime")}>
-          Prime login
-        </button>
-      </div>
-    </div>
+        <Button leftSection={<IconPlus size={16} />} onClick={() => props.onAdd()}>
+          Add to queue
+        </Button>
+        <Group grow gap="xs">
+          <Button
+            leftSection={<IconLogin2 size={16} />}
+            variant="light"
+            onClick={() => props.onLogin("youtube")}
+          >
+            YouTube login
+          </Button>
+          <Button
+            leftSection={<IconLogin2 size={16} />}
+            variant="light"
+            onClick={() => props.onLogin("prime")}
+          >
+            Prime login
+          </Button>
+        </Group>
+      </Stack>
+    </Card>
   );
 }
 
@@ -760,35 +922,42 @@ function PlaylistBuilder(props: {
   onSave: () => void;
 }) {
   return (
-    <div className="panel playlist-panel">
-      <div className="section-header">
-        <h2>{props.editing ? "Edit playlist" : "Create playlist"}</h2>
-        <button className="compact secondary" onClick={() => props.onClear()}>
-          New
-        </button>
-      </div>
-      <label>
-        Name
-        <input value={props.name} onChange={(event) => props.onNameChange(event.target.value)} />
-      </label>
-      <div className="playlist-selection">
-        {props.selectedIds.length ? (
-          props.selectedIds.map((id, index) => (
-            <div className="playlist-chip" key={id}>
-              <span>
-                {index + 1}. {props.mediaById.get(id)?.title ?? id}
-              </span>
-              <button className="compact secondary" onClick={() => props.onRemove(id)}>
-                Remove
-              </button>
-            </div>
-          ))
-        ) : (
-          <p className="muted">Select media items from the list.</p>
-        )}
-      </div>
-      <button onClick={() => props.onSave()}>Save playlist</button>
-    </div>
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Title order={3}>{props.editing ? "Edit playlist" : "Create playlist"}</Title>
+          <Button size="xs" variant="light" onClick={() => props.onClear()}>
+            New
+          </Button>
+        </Group>
+        <TextInput
+          label="Name"
+          value={props.name}
+          onChange={(event) => props.onNameChange(event.currentTarget.value)}
+        />
+        <Paper p="sm" radius="md" withBorder>
+          {props.selectedIds.length ? (
+            <Stack gap={6}>
+              {props.selectedIds.map((id, index) => (
+                <Group key={id} justify="space-between" wrap="nowrap">
+                  <Text className="truncate" size="sm">
+                    {index + 1}. {props.mediaById.get(id)?.title ?? id}
+                  </Text>
+                  <Button size="compact-xs" variant="subtle" onClick={() => props.onRemove(id)}>
+                    Remove
+                  </Button>
+                </Group>
+              ))}
+            </Stack>
+          ) : (
+            <Text c="dimmed" size="sm">
+              Select media items from the list.
+            </Text>
+          )}
+        </Paper>
+        <Button onClick={() => props.onSave()}>Save playlist</Button>
+      </Stack>
+    </Card>
   );
 }
 
@@ -801,57 +970,93 @@ function PlaylistList(props: {
   onQueue: (id: string) => void;
 }) {
   return (
-    <div className="panel playlist-panel">
-      <h2>Playlists</h2>
-      {props.message ? <p className="queue-message">{props.message}</p> : null}
-      <div className="rows">
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Title order={3}>Playlists</Title>
+        {props.message ? (
+          <Alert color="yellow" variant="light">
+            {props.message}
+          </Alert>
+        ) : null}
         {props.playlists.length ? (
-          props.playlists.map((playlist) => (
-            <div className="row media-row" key={playlist.id}>
-              <div>
-                <strong>{playlist.name}</strong>
-                <span>{playlistSummary(playlist, props.mediaById)}</span>
-              </div>
-              <div className="row-actions">
-                <button className="compact" onClick={() => props.onQueue(playlist.id)}>
-                  Queue
-                </button>
-                <button className="compact secondary" onClick={() => props.onEdit(playlist)}>
-                  Edit
-                </button>
-                <button className="compact danger" onClick={() => props.onDelete(playlist.id)}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))
+          <Stack gap="xs">
+            {props.playlists.map((playlist) => (
+              <Paper key={playlist.id} p="sm" radius="md" withBorder>
+                <Group justify="space-between" wrap="nowrap">
+                  <Box className="truncate">
+                    <Text fw={600}>{playlist.name}</Text>
+                    <Text c="dimmed" size="sm" truncate="end">
+                      {playlistSummary(playlist, props.mediaById)}
+                    </Text>
+                  </Box>
+                  <Group gap={6} wrap="nowrap">
+                    <Button size="xs" onClick={() => props.onQueue(playlist.id)}>
+                      Queue
+                    </Button>
+                    <Button size="xs" variant="light" onClick={() => props.onEdit(playlist)}>
+                      Edit
+                    </Button>
+                    <ActionIcon
+                      aria-label="Delete playlist"
+                      color="red"
+                      variant="light"
+                      onClick={() => props.onDelete(playlist.id)}
+                    >
+                      <IconTrash size={16} />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
         ) : (
-          <p className="muted">No playlists yet.</p>
+          <Text c="dimmed">No playlists yet.</Text>
         )}
-      </div>
-    </div>
+      </Stack>
+    </Card>
   );
 }
 
 function EventsPanel(props: { status: PlaybackStatus | undefined }) {
   return (
-    <section className="events-layout">
-      <div className="panel events">
-        <h2>Output events</h2>
-        <div className="event-list">
-          {props.status?.events.map((event) => (
-            <div className="event" key={event.id}>
-              <span>{new Date(event.createdAt).toLocaleTimeString()}</span>
-              <strong>{event.type}</strong>
-              <code>
-                {formatDetail(event.details.from)} -&gt; {formatDetail(event.details.to)}
-                {event.type === "FAILED" ? ` (${formatDetail(event.details.code)})` : ""}
-              </code>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
+    <Card withBorder radius="md" shadow="xs">
+      <Stack gap="sm">
+        <Title order={3}>Output events</Title>
+        {props.status?.events.length ? (
+          <ScrollArea.Autosize mah={620}>
+            <Table highlightOnHover verticalSpacing="sm">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Time</Table.Th>
+                  <Table.Th>Event</Table.Th>
+                  <Table.Th>Details</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {props.status.events.map((event) => (
+                  <Table.Tr key={event.id}>
+                    <Table.Td>{new Date(event.createdAt).toLocaleTimeString()}</Table.Td>
+                    <Table.Td>
+                      <Badge color={event.type === "FAILED" ? "red" : "gray"} variant="light">
+                        {event.type}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text component="code" size="sm">
+                        {formatDetail(event.details.from)} -&gt; {formatDetail(event.details.to)}
+                        {event.type === "FAILED" ? ` (${formatDetail(event.details.code)})` : ""}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea.Autosize>
+        ) : (
+          <Text c="dimmed">No events yet.</Text>
+        )}
+      </Stack>
+    </Card>
   );
 }
 
@@ -895,10 +1100,6 @@ function saveCachedArray<T>(key: string, values: T[]): void {
   }
 }
 
-function tabLabel(tab: DashboardTab): string {
-  return tab[0]!.toUpperCase() + tab.slice(1);
-}
-
 function formatDetail(value: unknown): string {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
     ? String(value)
@@ -909,6 +1110,14 @@ function scenarioLabel(item: MediaItem | undefined): string {
   if (item?.service === "prime" || item?.service === "youtube") return item.service;
   const scenario = item?.metadata.scenario;
   return typeof scenario === "string" ? scenario : "unknown";
+}
+
+function statusColor(status: string): string {
+  if (status === "playing" || status === "starting") return "teal";
+  if (status === "failed") return "red";
+  if (status === "paused") return "blue";
+  if (status === "skipped" || status === "cancelled") return "gray";
+  return "yellow";
 }
 
 function uploadStatus(item: MediaItem): string {
