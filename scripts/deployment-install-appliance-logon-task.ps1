@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [string]$TaskName = "CareTV Appliance",
   [string]$StartScript = (Join-Path $PSScriptRoot "deployment-start-appliance.ps1")
 )
+
+$ErrorActionPreference = "Stop"
 
 $scriptPath = Resolve-Path $StartScript
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")

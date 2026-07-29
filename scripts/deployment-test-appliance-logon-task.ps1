@@ -1,8 +1,8 @@
-$ErrorActionPreference = "Stop"
-
 param(
   [string]$TaskName = "CareTV Appliance"
 )
+
+$ErrorActionPreference = "Stop"
 
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
 Start-ScheduledTask -TaskName $TaskName
