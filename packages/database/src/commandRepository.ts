@@ -48,6 +48,14 @@ export class CommandRepository {
     return rows.map(mapCommandRow);
   }
 
+  public listSince(since: string): PlaybackCommand[] {
+    const rows = this.db
+      .prepare("SELECT * FROM playback_commands WHERE issued_at >= ? ORDER BY issued_at DESC")
+      .all(since) as unknown as CommandRow[];
+
+    return rows.map(mapCommandRow);
+  }
+
   public updateStatus(id: string, status: PlaybackCommandStatus): void {
     this.db.prepare("UPDATE playback_commands SET status = ? WHERE id = ?").run(status, id);
   }

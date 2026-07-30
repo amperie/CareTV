@@ -131,6 +131,16 @@ export class QueueRepository {
   }
 
   public remove(id: string): boolean {
+    const current = this.get(id);
+
+    if (!current) {
+      return false;
+    }
+
+    if (isTerminalStatus(current.status)) {
+      return this.deleteTerminal(id) > 0;
+    }
+
     const result = this.db
       .prepare("UPDATE queue_entries SET status = 'cancelled' WHERE id = ? AND status = 'queued'")
       .run(id);
@@ -209,13 +219,13 @@ export class QueueRepository {
   }
 
   public clearCompleted(): number {
-    const result = this.db
+    const ids = this.db
       .prepare(
-        "DELETE FROM queue_entries WHERE status IN ('completed', 'failed', 'skipped', 'cancelled')"
+        "SELECT id FROM queue_entries WHERE status IN ('completed', 'failed', 'skipped', 'cancelled')"
       )
-      .run();
+      .all() as { id: string }[];
 
-    return Number(result.changes);
+    return ids.reduce((count, row) => count + this.deleteTerminal(row.id), 0);
   }
 
   public move(id: string, direction: "up" | "down"): boolean {
@@ -366,6 +376,28 @@ export class QueueRepository {
       .get(id) as { count: number } | undefined;
 
     return row?.count ?? 0;
+  }
+
+  private deleteTerminal(id: string): number {
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      this.db
+        .prepare("UPDATE playback_events SET queue_entry_id = NULL WHERE queue_entry_id = ?")
+        .run(id);
+      this.db
+        .prepare("UPDATE playback_sessions SET queue_entry_id = NULL WHERE queue_entry_id = ?")
+        .run(id);
+      const result = this.db
+        .prepare(
+          "DELETE FROM queue_entries WHERE id = ? AND status IN ('completed', 'failed', 'skipped', 'cancelled')"
+        )
+        .run(id);
+      this.db.exec("COMMIT;");
+      return Number(result.changes);
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
   }
 }
 

@@ -228,6 +228,8 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
+    const session = this.sessions.get(context.mediaItem.id);
+    await session?.page?.close().catch(() => undefined);
     this.sessions.delete(context.mediaItem.id);
   }
 

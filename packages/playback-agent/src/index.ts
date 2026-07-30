@@ -34,6 +34,8 @@ export interface PlaybackAgentOptions {
   onStateChange?: (state: PlaybackState) => void;
 }
 
+const fullscreenCheckMs = 10_000;
+
 export class PlaybackAgent {
   private readonly abort = new AbortController();
   private state: PlaybackState;
@@ -113,6 +115,7 @@ export class PlaybackAgent {
     context: Parameters<StreamingAdapter["observe"]>[0]
   ): Promise<AgentRunResult> {
     const maxObservations = this.options.maxObservations ?? 120;
+    let nextFullscreenCheckAt = 0;
 
     for (let count = 0; count < maxObservations; count += 1) {
       const commandResult = await this.applyPendingCommands(queueEntryId, adapter, context);
@@ -127,6 +130,12 @@ export class PlaybackAgent {
         return { status: "failed", queueEntryId, errorCode: "browser-recovery-failed" };
       }
 
+      nextFullscreenCheckAt = await this.maintainFullscreen(
+        adapter,
+        context,
+        observation,
+        nextFullscreenCheckAt
+      );
       const result = await this.applyObservation(queueEntryId, adapter, context, observation);
 
       if (result) {
@@ -244,19 +253,12 @@ export class PlaybackAgent {
         this.apply(positionEvent("HEARTBEAT", observation.positionSeconds));
         return undefined;
       case "playing":
-        if (observation.fullscreen === false) {
-          await adapter.enterFullscreen(context);
-        }
-
         this.options.queue.updateStatus(queueEntryId, "playing");
         this.apply(playingEvent(observation));
         return undefined;
       case "paused":
         if (this.state.phase !== "paused") {
           await adapter.resume(context);
-          if (observation.fullscreen === false) {
-            await adapter.enterFullscreen(context);
-          }
           this.apply(positionEvent("HEARTBEAT", observation.positionSeconds));
           return undefined;
         }
@@ -265,10 +267,6 @@ export class PlaybackAgent {
         this.apply(positionEvent("PAUSED", observation.positionSeconds));
         return undefined;
       case "buffering":
-        if (observation.fullscreen === false) {
-          await adapter.enterFullscreen(context);
-        }
-
         this.apply({ type: "BUFFERING" });
         return undefined;
       case "blocked":
@@ -328,6 +326,31 @@ export class PlaybackAgent {
 
   private findAdapter(item: MediaItem): StreamingAdapter | undefined {
     return this.options.adapters.find((adapter) => adapter.supports(item));
+  }
+
+  private async maintainFullscreen(
+    adapter: StreamingAdapter,
+    context: Parameters<StreamingAdapter["observe"]>[0],
+    observation: PlaybackObservation,
+    nextFullscreenCheckAt: number
+  ): Promise<number> {
+    const now = this.now().getTime();
+
+    if (!["playing", "buffering"].includes(observation.status) || now < nextFullscreenCheckAt) {
+      return nextFullscreenCheckAt;
+    }
+
+    await adapter.enterFullscreen(context).catch((error) =>
+      this.options.logger.warn(
+        {
+          adapterId: adapter.id,
+          error: error instanceof Error ? error.message : "Unknown error",
+          mediaItemId: context.mediaItem.id
+        },
+        "Fullscreen restore failed."
+      )
+    );
+    return now + fullscreenCheckMs;
   }
 
   private now(): Date {

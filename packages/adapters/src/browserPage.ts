@@ -118,9 +118,9 @@ export async function openLoginBrowser(
   const port = options.remoteDebuggingPort ?? 9223;
   const url = loginUrl(service);
 
-    if (await isDebugPortReady(port)) {
-      const target = await createTarget(port, url);
-      await fetch(`http://127.0.0.1:${port}/json/activate/${target.id}`).catch(() => undefined);
+  if (await isDebugPortReady(port)) {
+    const target = await createTarget(port, url);
+    await fetch(`http://127.0.0.1:${port}/json/activate/${target.id}`).catch(() => undefined);
     return;
   }
 
@@ -326,8 +326,7 @@ class CdpBrowserPage implements BrowserPage {
 
   public async setWindowFullscreen(): Promise<void> {
     const window = (await this.send("Browser.getWindowForTarget", {})) as
-      | { windowId?: number }
-      | undefined;
+      { windowId?: number } | undefined;
 
     if (typeof window?.windowId !== "number") {
       return;

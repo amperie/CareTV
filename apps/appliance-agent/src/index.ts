@@ -26,6 +26,7 @@ let state: PlaybackState = createIdleState();
 let nextHeartbeatAt = 0;
 let nextMediaScanAt = 0;
 let backgroundHeartbeatInFlight = false;
+const fullscreenCheckMs = 10_000;
 let playbackSettings: PlaybackSettings = {
   enabled: false,
   fallbackEnabled: true,
@@ -289,8 +290,9 @@ async function monitor(
   context: AdapterContext
 ): Promise<"completed" | "failed" | "skipped"> {
   const startedAt = Date.now();
-  const maxRuntimeMs = maxRuntimeMsFor(mediaItem);
+  let maxRuntimeMs = maxRuntimeMsFor(mediaItem);
   let bufferingSince: number | undefined;
+  let nextFullscreenCheckAt = 0;
 
   for (;;) {
     const now = Date.now();
@@ -311,6 +313,15 @@ async function monitor(
     if (!observation) {
       return "failed";
     }
+
+    maxRuntimeMs = Math.max(maxRuntimeMs, maxRuntimeMsForObservation(observation));
+    nextFullscreenCheckAt = await maintainFullscreen(
+      streamingAdapter,
+      context,
+      observation,
+      now,
+      nextFullscreenCheckAt
+    );
 
     if (observation.status === "buffering") {
       bufferingSince ??= now;
@@ -433,10 +444,6 @@ async function applyObservation(
       await apply(positionEvent("HEARTBEAT", observation.positionSeconds));
       return undefined;
     case "playing":
-      if (observation.fullscreen === false) {
-        await streamingAdapter.enterFullscreen(context);
-      }
-
       await client.updateQueueStatus(queueEntryId, "playing");
       await apply({
         type: "PLAYING",
@@ -452,9 +459,6 @@ async function applyObservation(
     case "paused":
       if (state.phase !== "paused") {
         await streamingAdapter.resume(context);
-        if (observation.fullscreen === false) {
-          await streamingAdapter.enterFullscreen(context);
-        }
         await apply(positionEvent("HEARTBEAT", observation.positionSeconds));
         return undefined;
       }
@@ -463,10 +467,6 @@ async function applyObservation(
       await apply(positionEvent("PAUSED", observation.positionSeconds));
       return undefined;
     case "buffering":
-      if (observation.fullscreen === false) {
-        await streamingAdapter.enterFullscreen(context);
-      }
-
       await apply({ type: "BUFFERING" });
       return undefined;
     case "blocked":
@@ -525,7 +525,15 @@ async function apply(event: PlaybackStateEvent): Promise<void> {
     now: () => new Date()
   });
   state = result.state;
-  await client.appendEvent(result.event);
+  await client.appendEvent(result.event).catch((error) =>
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Playback event reporting failed.",
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    )
+  );
 }
 
 function canApplyCommand(command: PlaybackCommand, phase: PlaybackState["phase"]): boolean {
@@ -574,6 +582,41 @@ function maxRuntimeMsFor(mediaItem: MediaItem): number {
   return Math.max(60 * 60 * 1000, expectedMs + 30 * 60 * 1000);
 }
 
+function maxRuntimeMsForObservation(observation: PlaybackObservation): number {
+  const durationSeconds = observation.durationSeconds;
+
+  if (typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds)) {
+    return 0;
+  }
+
+  return Math.max(60 * 60 * 1000, durationSeconds * 1000 + 30 * 60 * 1000);
+}
+
+async function maintainFullscreen(
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext,
+  observation: PlaybackObservation,
+  now: number,
+  nextFullscreenCheckAt: number
+): Promise<number> {
+  if (!["playing", "buffering"].includes(observation.status) || now < nextFullscreenCheckAt) {
+    return nextFullscreenCheckAt;
+  }
+
+  await streamingAdapter.enterFullscreen(context).catch((error) =>
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Fullscreen restore failed.",
+        adapterId: streamingAdapter.id,
+        mediaItemId: context.mediaItem.id,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    )
+  );
+  return now + fullscreenCheckMs;
+}
+
 async function heartbeat(force = false): Promise<void> {
   const now = Date.now();
 
@@ -581,7 +624,17 @@ async function heartbeat(force = false): Promise<void> {
     return;
   }
 
-  await client.heartbeat(config.values.applianceId, config.values.applianceName, state);
+  await client
+    .heartbeat(config.values.applianceId, config.values.applianceName, state)
+    .catch((error) =>
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Appliance heartbeat failed.",
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      )
+    );
   nextHeartbeatAt = now + config.values.applianceHeartbeatMs;
 }
 
@@ -592,14 +645,11 @@ class ServerClient {
   ) {}
 
   public heartbeat(applianceId: string, name: string, playbackState: PlaybackState) {
-    return this.post<{ playback: PlaybackSettings }>(
-      "/api/v1/appliance/heartbeat",
-      {
-        applianceId,
-        name,
-        state: playbackState
-      }
-    );
+    return this.post<{ playback: PlaybackSettings }>("/api/v1/appliance/heartbeat", {
+      applianceId,
+      name,
+      state: playbackState
+    });
   }
 
   public playbackSettings() {
@@ -753,12 +803,12 @@ void main();
 function shouldQueueYouTubeFallback(code: string | undefined): boolean {
   return Boolean(
     code &&
-      [
-        "youtube-signin-required",
-        "youtube-age-verification-required",
-        "youtube-verification-required",
-        "youtube-consent-required"
-      ].includes(code)
+    [
+      "youtube-signin-required",
+      "youtube-age-verification-required",
+      "youtube-verification-required",
+      "youtube-consent-required"
+    ].includes(code)
   );
 }
 

@@ -8,6 +8,7 @@ import Fastify from "fastify";
 import { loadConfig } from "@caretv/config";
 import type {
   MediaItem,
+  PlaybackEvent,
   PlaybackCommand,
   PlaybackCommandStatus,
   PlaybackCommandType,
@@ -92,6 +93,7 @@ app.get("/api/v1/playback/status", () => {
     ...(appliance?.playbackState ? { state: appliance.playbackState } : {})
   };
 });
+app.get("/api/v1/logs", () => playbackLogs(new Date(Date.now() - 24 * 60 * 60 * 1000)));
 
 app.post("/api/v1/media", (request, reply) => {
   const body = parseBody(request.body);
@@ -301,7 +303,6 @@ app.post("/api/v1/playlists/:id/queue", (request, reply) => {
 });
 
 app.post("/api/v1/queue/clear-completed", () => {
-  db.exec("DELETE FROM playback_events;");
   return { cleared: queue.clearCompleted() };
 });
 
@@ -981,6 +982,144 @@ try {
   process.exit(1);
 }
 
+interface PlaybackLogEntry {
+  id: string;
+  createdAt: string;
+  severity: "info" | "warning" | "error";
+  source: "appliance" | "dashboard";
+  type: string;
+  title: string;
+  mediaTitle?: string;
+  description: string;
+  details: Record<string, unknown>;
+}
+
+function playbackLogs(since: Date): { since: string; entries: PlaybackLogEntry[] } {
+  const sinceIso = since.toISOString();
+  const entries = [
+    ...events.listSince(sinceIso).flatMap(logEntryForEvent),
+    ...commands.listSince(sinceIso).map(logEntryForCommand)
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  return { since: sinceIso, entries };
+}
+
+function logEntryForEvent(event: PlaybackEvent): PlaybackLogEntry[] {
+  if (event.type === "PLAYING" || event.type === "HEARTBEAT") {
+    return [];
+  }
+
+  const item = event.mediaItemId ? media.get(event.mediaItemId) : undefined;
+  const mediaTitle = item?.title;
+  const description = eventDescription(event, mediaTitle);
+  return [
+    {
+      id: `event-${event.id}`,
+      createdAt: event.createdAt,
+      severity: event.type === "FAILED" ? "error" : event.type === "BUFFERING" ? "warning" : "info",
+      source: "appliance",
+      type: event.type,
+      title: event.type === "FAILED" ? "Playback failed" : eventTitle(event.type),
+      ...(mediaTitle ? { mediaTitle } : {}),
+      description,
+      details: event.details
+    }
+  ];
+}
+
+function logEntryForCommand(command: PlaybackCommand): PlaybackLogEntry {
+  const item = command.mediaItemId ? media.get(command.mediaItemId) : undefined;
+  const mediaTitle = item?.title;
+  return {
+    id: `command-${command.id}`,
+    createdAt: command.issuedAt,
+    severity:
+      command.status === "failed"
+        ? "error"
+        : command.type === "skip" || command.type === "stop"
+          ? "warning"
+          : "info",
+    source: "dashboard",
+    type: command.type,
+    title: `Command ${command.status}`,
+    ...(mediaTitle ? { mediaTitle } : {}),
+    description: `${commandLabel(command.type)} ${command.status}${mediaTitle ? ` for ${mediaTitle}` : ""}.`,
+    details: {
+      issuedBy: command.issuedBy,
+      status: command.status
+    }
+  };
+}
+
+function eventDescription(event: PlaybackEvent, mediaTitle: string | undefined): string {
+  const name = mediaTitle ?? "Playback item";
+  const code = stringOptional(event.details.code);
+  const message = stringOptional(event.details.message);
+
+  if (event.type === "FAILED") {
+    return `${name} failed${code ? ` with ${friendlyIssueCode(code)}` : ""}${message ? `: ${message}` : "."}`;
+  }
+
+  if (event.type === "QUEUE_SELECTED") return `${name} was selected for playback.`;
+  if (event.type === "BROWSER_LAUNCHED") return `Browser launched for ${name}.`;
+  if (event.type === "READY") return `${name} loaded and is ready to play.`;
+  if (event.type === "BUFFERING") return `${name} is buffering.`;
+  if (event.type === "PAUSED") return `${name} paused.`;
+  if (event.type === "COMPLETED") return `${name} completed.`;
+  if (event.type === "STOPPED") return "Playback stopped and the appliance returned to idle.";
+  if (event.type === "RECOVERING") return `${name} entered recovery mode.`;
+
+  return `${eventTitle(event.type)}${mediaTitle ? `: ${mediaTitle}` : ""}.`;
+}
+
+function eventTitle(type: string): string {
+  return type
+    .toLowerCase()
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function commandLabel(type: PlaybackCommandType): string {
+  switch (type) {
+    case "login-prime":
+      return "Prime login";
+    case "login-youtube":
+      return "YouTube login";
+    case "play-now":
+      return "Play now";
+    case "restart-agent":
+      return "Restart agent";
+    case "restart-browser":
+      return "Restart browser";
+    default:
+      return eventTitle(type);
+  }
+}
+
+function friendlyIssueCode(code: string): string {
+  switch (code) {
+    case "youtube-signin-required":
+      return "YouTube signed out";
+    case "youtube-age-verification-required":
+      return "YouTube age verification required";
+    case "youtube-verification-required":
+      return "Google account verification required";
+    case "youtube-consent-required":
+      return "YouTube consent prompt";
+    case "youtube-buffering-timeout":
+      return "YouTube buffering timeout";
+    case "agent-error":
+      return "appliance agent error";
+    case "browser-recovery-failed":
+      return "browser recovery failed";
+    case "observation-limit":
+      return "playback observation limit";
+    default:
+      return code;
+  }
+}
+
 function parseBody(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>)
@@ -1085,9 +1224,7 @@ async function notify(
     const isNtfy = config.values.notificationFormat === "ntfy";
     const response = await fetch(url, {
       body: isNtfy ? message : JSON.stringify({ details, message, title }),
-      headers: isNtfy
-        ? { title }
-        : { "content-type": "application/json" },
+      headers: isNtfy ? { title } : { "content-type": "application/json" },
       method: "POST",
       signal: controller.signal
     });

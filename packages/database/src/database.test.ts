@@ -197,6 +197,33 @@ describe("database repositories", () => {
     });
   });
 
+  it("removes terminal queue entries", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+      const events = new PlaybackEventRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("skipped", "media-1", 1),
+        status: "skipped",
+        completedAt: now
+      });
+      events.append({
+        id: "event-1",
+        queueEntryId: "skipped",
+        mediaItemId: "media-1",
+        type: "playback-state",
+        details: {},
+        createdAt: now
+      });
+
+      expect(queue.remove("skipped")).toBe(true);
+      expect(queue.get("skipped")).toBeUndefined();
+      expect(events.listRecent(1)[0]?.queueEntryId).toBeUndefined();
+    });
+  });
+
   it("requeues all completed entries in their original order", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

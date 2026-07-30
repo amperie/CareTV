@@ -44,6 +44,14 @@ export class PlaybackEventRepository {
 
     return rows.map(mapEventRow);
   }
+
+  public listSince(since: string): PlaybackEvent[] {
+    const rows = this.db
+      .prepare("SELECT * FROM playback_events WHERE created_at >= ? ORDER BY created_at DESC")
+      .all(since) as unknown as EventRow[];
+
+    return rows.map(mapEventRow);
+  }
 }
 
 function mapEventRow(row: EventRow): PlaybackEvent {

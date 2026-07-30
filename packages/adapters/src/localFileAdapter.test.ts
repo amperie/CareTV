@@ -72,7 +72,7 @@ describe("local file adapter", () => {
       expect(await adapter.observe(context)).toMatchObject({ status: "completed" });
 
       await adapter.cleanup(context);
-      expect(page.closed).toBe(false);
+      expect(page.closed).toBe(true);
     });
   });
 

@@ -1,259 +1,127 @@
 # CareTV
 
-CareTV is a local-first television automation system for a resident who cannot reliably use
-a remote. The first milestone is not commercial streaming automation. It is a reliable queue,
-state model, dashboard, fake adapter, local-media playback, recovery, and watchdog foundation.
+CareTV is a Windows-focused television automation prototype. A server/dashboard manages media,
+playlists, queue state, playback commands, appliance heartbeat, and operational event history. A
+TV-connected Windows appliance polls the server, plays items locally, and reports state back.
 
-## Current Status
+The current implementation is source-checkout prototype code, not a packaged Windows service.
 
-This repository currently contains the Phase 0/1 local prototype:
+## What Works
 
-- pnpm TypeScript workspace
-- server control plane
-- web dashboard
-- appliance agent
-- shared package structure
-- SQLite repositories for media, queue, commands, events, settings, and appliance heartbeat
-- appliance local-media inventory sync and upload download jobs
-- fake playback adapter, local-file adapter, Prime Video adapter, YouTube adapter, and state machine
-- strict TypeScript, ESLint, Prettier, and Vitest configuration
-- Windows-focused startup script
+- Fastify API server on port `4010`
+- React dashboard on port `4020`
+- SQLite runtime database under `runtimeDir`
+- appliance polling runtime in `apps/appliance-agent`
+- queue, playlist, upload, local-media inventory, downloads, and deletion jobs
+- fake playback adapter for deterministic testing
+- local-file playback through visible Chrome and Chrome DevTools Protocol
+- early YouTube and Prime Video browser adapters
+- YouTube fallback playlist support
+- manual login commands for YouTube and Prime
+- 24-hour dashboard log view derived from stored playback events and dashboard commands
+- Windows PowerShell startup scripts and appliance logon scheduled-task installer
 
-Prime Video and YouTube automation are implemented as early browser adapters. Prime requires a
-manually signed-in persistent Chrome profile on the appliance and must be validated on physical
-Windows hardware with a real HDMI display because DRM playback can fail in virtualized or
-remote-display environments.
+## Important Limits
 
-## Architecture
+- There is no production authentication layer yet. Do not expose the raw dev server to the public
+  internet.
+- The server UI does not collect every appliance process log. It shows stored playback events and
+  commands. Appliance startup errors, server-connectivity failures, Chrome stderr/stdout, and crashes
+  can remain local to the appliance console or scheduled-task history.
+- Prime/DRM playback must be validated on physical Windows hardware with a real HDMI display.
+  VM or remote-display failures are not proof the adapter is wrong.
+- `apps/watchdog` and `apps/agent` are legacy/placeholders. The active appliance runtime is
+  `apps/appliance-agent`.
+- The app is still run through pnpm/tsx. There is no installer, updater, signed executable, or
+  durable Windows service wrapper yet.
 
-CareTV is split into a control plane and an appliance runtime. The control plane owns the dashboard,
-API, queue, commands, appliance heartbeat, and SQLite database. The appliance runtime polls the
-control plane, claims queued work, runs playback locally, and reports state/events back.
+## Repo Layout
 
-```mermaid
-flowchart LR
-  subgraph Operator["Family / Operator Device"]
-    Browser["Web browser"]
-  end
-
-  subgraph Control["CareTV Control Plane"]
-    Web["apps/web\nReact dashboard"]
-    Server["apps/server\nFastify API"]
-    DB[("SQLite\nmedia, queue, commands,\nevents, settings, appliances")]
-  end
-
-  subgraph Appliance["TV Appliance / Mini-PC"]
-    ApplianceAgent["apps/appliance-agent\npolling runtime"]
-    Adapter["Fake + local-file adapters today\nstreaming adapters later"]
-    Display["TV output"]
-  end
-
-  subgraph Shared["Shared Workspace Packages"]
-    Core["@caretv/core\ndomain types"]
-    Config["@caretv/config\nenv/runtime paths"]
-    Database["@caretv/database\nrepositories + migrations"]
-    State["@caretv/state-machine\nplayback transitions"]
-    Adapters["@caretv/adapters\nadapter contract + fake/local adapters"]
-    Playback["@caretv/playback-agent\nin-process fake runner"]
-  end
-
-  Browser --> Web
-  Web --> Server
-  Server <--> DB
-  ApplianceAgent -->|polls playback settings,\nclaims queue items,\nfetches commands/media| Server
-  ApplianceAgent -->|heartbeats,\nstate, events,\nqueue status| Server
-  ApplianceAgent --> Adapter
-  Adapter --> Display
-
-  Server -.uses.-> Config
-  Server -.uses.-> Database
-  Server -.uses.-> Core
-  ApplianceAgent -.uses.-> Core
-  ApplianceAgent -.uses.-> Config
-  ApplianceAgent -.uses.-> State
-  ApplianceAgent -.uses.-> Adapters
-  Playback -.uses.-> Database
-  Playback -.uses.-> State
-  Playback -.uses.-> Adapters
-```
-
-### Runtime Flow
-
-1. The dashboard calls `apps/server` over `/api/v1` to create fake media, manage the queue, start or
-   stop playback, toggle loop mode, and issue commands.
-2. The server persists media, queue entries, playback commands, appliance heartbeats, and events in
-   SQLite through `@caretv/database`.
-3. `apps/appliance-agent` polls the server for playback settings. When playback is enabled, it claims
-   the next queued entry and fetches the media item.
-4. The appliance selects an adapter. Today that is deterministic fake playback, local-file playback,
-   Prime Video playback, or YouTube playback in `@caretv/adapters`.
-5. The appliance uses `@caretv/state-machine` to turn observations and commands into explicit
-   playback states, then reports heartbeats/events/status updates back to the server.
-6. The dashboard reads `/api/v1/playback/status` to show queue state, appliance state, and recent
-   events.
-
-### Package Responsibilities
-
-- `apps/server`: local Fastify API, CORS handling for the dashboard, SQLite ownership, operator
-  endpoints, and appliance polling endpoints.
-- `apps/web`: browser dashboard for the fake playback lab.
-- `apps/appliance-agent`: polling process intended to run on the TV-connected appliance.
-- `apps/agent`: older local placeholder entry point retained while the appliance runtime evolves.
-- `apps/watchdog`: placeholder for process health checks and restart behavior.
-- `@caretv/core`: shared domain types and health helpers.
-- `@caretv/config`: config file and environment loading, validation, path normalization, and redacted config output.
-- `@caretv/database`: SQLite migrations and repositories.
-- `@caretv/adapters`: playback adapter contract plus deterministic fake, local-file, Prime, and
-  YouTube adapters.
-- `@caretv/state-machine`: allowed playback transitions and event generation.
-- `@caretv/playback-agent`: in-process fake playback runner used by the server-side prototype path.
-
-## Requirements
-
-- Windows 11 for the target development VM
-- Node.js LTS
-- Corepack enabled for pnpm
-- Google Chrome installed for local-file browser playback
+- `apps/server`: Fastify API, SQLite owner, upload staging, appliance endpoints, dashboard endpoints
+- `apps/web`: React/Mantine dashboard
+- `apps/appliance-agent`: polling runtime for the TV-connected Windows machine
+- `apps/watchdog`: placeholder health-check app
+- `apps/agent`: older local placeholder
+- `packages/core`: shared domain types
+- `packages/config`: config loading, validation, path normalization, directory creation
+- `packages/database`: SQLite schema and repositories
+- `packages/state-machine`: playback state transitions and event generation
+- `packages/adapters`: fake, local-file, YouTube, and Prime playback adapters
+- `packages/playback-agent`: in-process playback runner retained for tests/prototype paths
+- `scripts`: Windows startup, restart, cleanup, and scheduled-task helpers
 
 ## Setup
+
+Prerequisites:
+
+- Windows 11 for the target appliance
+- Node.js LTS
+- Corepack
+- Google Chrome
+
+Install dependencies:
 
 ```powershell
 corepack enable
 corepack prepare pnpm@9.15.4 --activate
 pnpm install
+```
+
+Run checks:
+
+```powershell
 pnpm lint
 pnpm typecheck
 pnpm test
 ```
 
-## Development
+## Local Development
 
-Start the server, dashboard, and local appliance agent:
+Start server, dashboard, and appliance together:
 
 ```powershell
 .\scripts\start-dev.ps1
 ```
 
-Or run directly:
+Equivalent direct command:
 
 ```powershell
 pnpm dev
 ```
 
-Start only the server-side components on the control-plane machine:
+Start only the server and dashboard:
 
 ```powershell
 .\scripts\start-server.ps1
 ```
 
-This runs:
-
-- `apps/server` on port `4010`
-- `apps/web` on port `4020`
-
-Open the dashboard at `http://w11.lan:4020` from another device on the LAN.
-
-Start only the appliance-side runtime on the TV-connected machine:
+Start only the appliance runtime:
 
 ```powershell
 .\scripts\start-appliance.ps1
 ```
 
-The appliance finds the server through `serverUrl` in `caretv.config.json`. In
-`caretv.config.example.json` it is set to:
+Default endpoints:
 
-```text
-serverUrl: "http://w11.lan:4010"
-```
+- server health: `http://127.0.0.1:4010/health`
+- dashboard: `http://127.0.0.1:4020`
 
-## Server And Appliance Deployment
+For LAN access, set `host` to `0.0.0.0` in `caretv.config.json` or use
+`scripts\deployment-start-full-local-stack.ps1`, which defaults `CARETV_HOST` to `0.0.0.0`.
 
-### Server side
+## Configuration
 
-Run this on the control-plane machine, VM, or internet host:
+Runtime config is read from `caretv.config.json` in the working directory unless
+`CARETV_CONFIG_FILE` points somewhere else. Environment variables override file values.
 
-```powershell
-.\scripts\start-server.ps1
-```
-
-Server-side components:
-
-- `apps/server`: API and SQLite owner, default port `4010`
-- `apps/web`: dashboard, default port `4020`
-- Runtime database and upload staging under `CARETV_RUNTIME_DIR`
-
-If the server is reachable on the LAN as `w11.lan`, use:
-
-```text
-{
-  "host": "0.0.0.0",
-  "serverUrl": "http://w11.lan:4010"
-}
-```
-
-If the server is on the internet, put it behind a real HTTPS hostname and set the appliance to that
-public URL instead:
-
-```text
-{
-  "serverUrl": "https://caretv.example.com"
-}
-```
-
-Do not expose the raw development server directly to the internet long-term. The current prototype
-has permissive CORS and no production authentication layer.
-
-### Appliance side
-
-The easiest current appliance deployment is a source checkout. This is prototype-grade: it runs the
-TypeScript workspace through pnpm instead of a packaged executable or Windows service.
-
-Install prerequisites on the TV-connected Windows appliance:
-
-- Node.js LTS from `https://nodejs.org/`
-- Git from `https://git-scm.com/`
-- Google Chrome
-
-Corepack ships with Node.js. It provides the pinned pnpm version used by this repo. Open PowerShell
-as Administrator once and enable pnpm:
+Start from:
 
 ```powershell
-node --version
-corepack --version
-corepack enable
-corepack prepare pnpm@9.15.4 --activate
-pnpm --version
-```
-
-If `corepack enable` fails with `EPERM` under `C:\Program Files\nodejs`, reopen PowerShell as
-Administrator and run it again.
-
-If `pnpm --version` fails because `pnpm.ps1` cannot be loaded, allow local user scripts:
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-pnpm --version
-```
-
-If changing the execution policy is not acceptable, use the command shim explicitly:
-
-```powershell
-pnpm.cmd --version
-pnpm.cmd install
-```
-
-Then clone the repo, install dependencies, and create the appliance config:
-
-```powershell
-git clone <repo-url> C:\CareTV\app
-cd C:\CareTV\app
-pnpm install
-
 Copy-Item caretv.config.example.json caretv.config.json
 notepad caretv.config.json
 ```
 
-Set appliance-specific values in `caretv.config.json`:
+Typical appliance config:
 
 ```json
 {
@@ -265,14 +133,35 @@ Set appliance-specific values in `caretv.config.json`:
 }
 ```
 
-The appliance start scripts pass the repo-root `caretv.config.json` through `CARETV_CONFIG_FILE`.
-This is required because pnpm runs the appliance package with `apps/appliance-agent` as its working
-directory. When `caretv.config.json` exists, these scripts clear `CARETV_SERVER_URL` for the child
-process so the file's `serverUrl` is used instead of a stale environment override.
+Common keys:
 
-Start the appliance manually:
+- `host`: server bind host, default `127.0.0.1`
+- `serverPort`: API port, default `4010`
+- `webPort`: dashboard port, default `4020`
+- `runtimeDir`: SQLite/upload/runtime data directory
+- `chromeProfileDir`: persistent Chrome profile used by adapters
+- `serverUrl`: URL the appliance polls
+- `applianceId`: stable appliance id
+- `applianceName`: dashboard display name
+- `appliancePollMs`: queue/settings polling interval
+- `applianceHeartbeatMs`: idle heartbeat interval
+- `appliancePlaybackObserveMs`: playback observation interval
+- `applianceRequestTimeoutMs`: appliance HTTP request timeout
+- `applianceMediaDir`: local media directory scanned by the appliance
+- `applianceMediaScanMs`: local media scan interval
+- `notificationWebhookUrl`: optional failure notification endpoint
+- `remoteSupportUrl`: optional dashboard link for remote support
+
+## Appliance Deployment
+
+Prototype appliance setup:
 
 ```powershell
+git clone <repo-url> C:\CareTV\app
+cd C:\CareTV\app
+pnpm install
+Copy-Item caretv.config.example.json caretv.config.json
+notepad caretv.config.json
 .\scripts\deployment-start-appliance.ps1
 ```
 
@@ -282,146 +171,75 @@ After manual startup works, install the logon scheduled task:
 .\scripts\deployment-install-appliance-logon-task.ps1
 ```
 
-Appliance-side responsibilities:
+Useful deployment scripts:
 
-- Poll the server for playback settings and queued work
-- Poll the server for commands such as pause, resume, skip, and stop
-- Send heartbeat, playback state, events, and queue status updates
-- Scan `CARETV_APPLIANCE_MEDIA_DIR` and sync discovered local media inventory
-- Pull uploaded media from the server and save it locally
-- Pull media deletion jobs from the server and delete local files
-- Launch Chrome locally for playback
+- `scripts\deployment-start-full-local-stack.ps1`: server, dashboard, and appliance on one machine
+- `scripts\deployment-restart-full-local-stack.ps1`: clean stale runtime state, then start full stack
+- `scripts\deployment-start-appliance.ps1`: appliance only
+- `scripts\deployment-restart-appliance.ps1`: restart appliance only
+- `scripts\deployment-install-appliance-logon-task.ps1`: install user logon scheduled task
+- `scripts\deployment-uninstall-appliance-logon-task.ps1`: remove scheduled task
+- `scripts\deployment-test-appliance-logon-task.ps1`: trigger the scheduled task manually
+- `scripts\deployment-clean-stale-runtime.ps1`: clean stale local runtime state
 
-### Network direction and NAT
+## Runtime Model
 
-The appliance is designed to work behind NAT. The server never needs to open a connection into the
-appliance.
+The appliance initiates all normal communication:
 
-All appliance communication is appliance-initiated outbound HTTP(S):
+- heartbeats and playback state
+- queue claiming
+- media metadata fetches
+- command polling
+- event posting
+- local media inventory sync
+- upload downloads
+- media deletion completion/failure
 
-- appliance `POST /api/v1/appliance/heartbeat`
-- appliance `POST /api/v1/appliance/queue/next`
-- appliance `GET /api/v1/appliance/commands`
-- appliance `GET /api/v1/appliance/downloads`
-- appliance `GET /api/v1/appliance/downloads/:id/file`
-- appliance `POST /api/v1/appliance/media-inventory`
-- appliance `GET /api/v1/appliance/media-deletions`
-- appliance status updates back to the server
+The dashboard talks to the server only. It does not open a direct connection to the appliance.
 
-The operator dashboard talks to the server directly from the operator's browser. The dashboard does
-not talk to the appliance.
+## Logs
 
-Minimum network requirements:
+The dashboard Logs tab calls `/api/v1/logs` and shows the last 24 hours of:
 
-- Appliance: outbound access to `CARETV_SERVER_URL`
-- Server: inbound access from appliances and operator browsers
-- Appliance: no inbound port forwarding required
+- appliance playback events posted to `/api/v1/appliance/events`
+- dashboard commands stored by the server
 
-Default local endpoints:
+It intentionally omits noisy `PLAYING` and `HEARTBEAT` events. It is not a full process-log viewer.
+When troubleshooting local appliance failures, also inspect:
 
-- server health: `http://127.0.0.1:4010/health`
-- web dashboard: `http://127.0.0.1:4020`
+- the PowerShell session running `deployment-start-appliance.ps1`
+- Windows Task Scheduler history for `CareTV Appliance`
+- Chrome behavior on the appliance display
+- local stdout/stderr captured by whatever process manager is used
 
-In deployment, the server/dashboard can run on a hosted machine and the appliance agent runs on the
-TV appliance. The appliance polls the server for queue work and commands, executes playback locally,
-and reports heartbeat/state/events back to the server.
+## Media And Playback
 
-## Fake Playback Lab
+Local files:
 
-The dashboard can add fake media items, enqueue them, start/stop playback, toggle loop, edit queued
-items, show discovered local media, upload media for the appliance to download, and show appliance
-state/event output.
+- appliance scans `applianceMediaDir`
+- supported extensions: `.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`, `.avi`
+- dashboard uploads are staged by the server and pulled down by the appliance
+- local playback uses Chrome with a generated HTML5 player page
 
-1. Start the local server, dashboard, and appliance:
+Streaming URLs:
 
-   ```powershell
-   .\scripts\start-dev.ps1
-   ```
+- YouTube and Prime URLs can be queued from the dashboard
+- server tries to resolve a human-readable title from page metadata
+- adapters open visible Chrome using `chromeProfileDir`
+- login/profile/purchase/age/consent blockers are reported as playback failures where detected
 
-2. Open `http://127.0.0.1:4020`.
-3. Add one or more fake items.
-4. Click `Start`.
-5. Watch the output panel, queue statuses, and event log update as items play through.
+Manual login:
 
-Fake playback is deterministic. Local-file playback launches Google Chrome with the configured
-persistent profile, opens a generated HTML5 player page, loads the appliance-local file, and controls
-playback through Chrome DevTools Protocol.
+- use the dashboard login buttons for YouTube or Prime
+- the appliance opens Chrome with the persistent profile
+- credentials are not stored by CareTV
 
-## Streaming URLs
+## Backlog
 
-Prime and YouTube items are queued from the dashboard with URLs. The server resolves the page title
-from standard page metadata and stores that title on the media item, so the queue and playback UI show
-human-readable titles rather than URLs.
-
-The streaming adapters open the URL in visible Chrome through the appliance's persistent
-`CARETV_CHROME_PROFILE_DIR`, try to start or resume playback, enter fullscreen, observe the page video
-element, and report common blockers such as sign-in, profile selection, purchase/rental requirements,
-unavailable titles, age restrictions, and playback errors.
-
-Before testing Prime, start Chrome through the appliance profile and sign into Amazon manually once.
-Do not store Amazon credentials in CareTV. Use included-with-Prime titles for validation. YouTube can
-play public videos without login, but age-restricted or private videos will be reported as blocked.
-
-Shared adapter components live in `packages/adapters/src`:
-
-- `browserPage.ts`: visible Chrome launch, persistent profile reuse, Chrome DevTools Protocol page
-  creation, selector clicks, text-button clicks, and page evaluation.
-- `videoObservation.ts`: generic HTML5 video state mapping into CareTV playback observations.
-- Service selector modules: Prime and YouTube keep service-specific selectors and blocker detection
-  out of the appliance orchestration loop.
-
-## Local Media Inventory And Uploads
-
-The appliance agent scans `CARETV_APPLIANCE_MEDIA_DIR` for `.mp4`, `.m4v`, `.webm`, `.mov`, `.mkv`,
-and `.avi` files every `CARETV_APPLIANCE_MEDIA_SCAN_MS`, then syncs those files to the server media
-catalog. The dashboard shows those discovered local files under `Discovered media`.
-
-The dashboard upload button sends a media file to the server runtime upload directory. The appliance
-polls for pending downloads, saves them into `CARETV_APPLIANCE_MEDIA_DIR`, and reports completion so
-the item can be queued from the dashboard.
-
-Queued local media is played by the appliance through the local-file adapter. The adapter reuses the
-configured Chrome profile, observes browser video state, and issues player-level play, pause, resume,
-stop, and fullscreen commands.
-
-## Appliance Configuration
-
-Runtime config is read from `caretv.config.json` in the working directory by default. Start from
-`caretv.config.example.json` and set appliance-specific values there:
-
-```json
-{
-  "serverUrl": "http://w11.lan:4010",
-  "applianceId": "living-room-tv",
-  "applianceName": "Living Room TV",
-  "chromeProfileDir": "C:\\CareTV\\chrome-profile",
-  "applianceMediaDir": "C:\\CareTV\\media"
-}
-```
-
-The supported file keys match the internal camel-case config names:
-
-- `serverUrl`: server base URL, default `http://127.0.0.1:4010`
-- `applianceId`: stable appliance id, default `local-appliance`
-- `applianceName`: dashboard display name, default `Local Appliance`
-- `appliancePollMs`: control/queue polling interval, default `1000`
-- `applianceHeartbeatMs`: idle heartbeat interval, default `5000`
-- `appliancePlaybackObserveMs`: playback observation/progress interval, default `1000`
-- `applianceMediaDir`: local media folder scanned by the appliance, default `<user data>/CareTV/media`
-- `applianceMediaScanMs`: local media scan interval, default `30000`
-- `runtimeDir`: runtime database/upload/log location, default `<user data>/CareTV/runtime`
-- `chromeProfileDir`: persistent browser profile location, default `<user data>/CareTV/chrome-profile`
-
-Set `CARETV_CONFIG_FILE` only when the config file lives somewhere else. Environment variables still
-override file values for deployment overrides.
-
-## Runtime Data
-
-Runtime data must stay outside source control. Use `.env.example` as the starting point and
-store browser profiles, SQLite databases, screenshots, and logs under a runtime directory such
-as `C:\CareTV\runtime`.
-
-## Next Task
-
-Harden the local-file adapter on physical TV hardware, then add a streaming adapter such as YouTube
-before attempting DRM-heavy services.
+- package the appliance as a durable Windows service or scheduled-task wrapper with log files
+- add real auth before any internet exposure
+- centralize appliance process logs or expose a bounded support bundle
+- finish watchdog/restart behavior
+- validate local-file playback on the production TV hardware
+- harden YouTube and Prime selectors against real-world blocker screens
+- add screenshots/diagnostic capture with redaction rules

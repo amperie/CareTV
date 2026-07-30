@@ -12,7 +12,8 @@ export interface YouTubeDomState extends VideoDomState {
 const blockerPatterns = [
   {
     code: "youtube-verification-required",
-    pattern: /confirm it'?s you|verify it'?s you|this helps protect your account|couldn'?t sign you in/i
+    pattern:
+      /confirm it'?s you|verify it'?s you|this helps protect your account|couldn'?t sign you in/i
   },
   {
     code: "youtube-age-verification-required",
@@ -20,9 +21,13 @@ const blockerPatterns = [
   },
   {
     code: "youtube-signin-required",
-    pattern: /sign in to confirm|sign in to youtube|you'?re signed out|use youtube signed out|choose an account|use another account/i
+    pattern:
+      /sign in to confirm|sign in to youtube|you'?re signed out|use youtube signed out|choose an account|use another account/i
   },
-  { code: "youtube-consent-required", pattern: /before you continue to youtube|reject all|accept all/i },
+  {
+    code: "youtube-consent-required",
+    pattern: /before you continue to youtube|reject all|accept all/i
+  },
   {
     code: "youtube-unavailable",
     pattern: /video unavailable|this video is unavailable|removed by the uploader/i

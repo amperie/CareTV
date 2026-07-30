@@ -65,9 +65,11 @@ const theme = createTheme({
     ]
   },
   defaultRadius: "sm",
-  fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+  fontFamily:
+    "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
   headings: {
-    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+    fontFamily:
+      "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
   }
 });
 
@@ -86,6 +88,8 @@ interface QueueEntry {
   mediaItemId: string;
   position: number;
   status: string;
+  startedAt?: string;
+  completedAt?: string;
   lastErrorCode?: string;
   lastErrorMessage?: string;
 }
@@ -100,12 +104,30 @@ interface PlaybackStatus {
   running: boolean;
   state?: {
     phase: string;
+    queueEntryId?: string;
     mediaItemId?: string;
     title?: string;
     positionSeconds?: number;
     durationSeconds?: number;
     error?: { code: string; message: string };
   };
+}
+
+interface PlaybackLogEntry {
+  id: string;
+  createdAt: string;
+  severity: "info" | "warning" | "error";
+  source: "appliance" | "dashboard";
+  type: string;
+  title: string;
+  mediaTitle?: string;
+  description: string;
+  details: Record<string, unknown>;
+}
+
+interface LogsResponse {
+  since: string;
+  entries: PlaybackLogEntry[];
 }
 
 interface Playlist {
@@ -123,7 +145,7 @@ interface FallbackQueueItem {
   url: string;
 }
 
-type DashboardTab = "main" | "media" | "fallback" | "events";
+type DashboardTab = "main" | "media" | "fallback" | "logs";
 
 function App() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("main");
@@ -135,6 +157,7 @@ function App() {
   const [fallbackUrl, setFallbackUrl] = useState("");
   const [media, setMedia] = useState<MediaItem[]>(() => loadCachedArray<MediaItem>(mediaCacheKey));
   const [mediaSearch, setMediaSearch] = useState("");
+  const [logs, setLogs] = useState<LogsResponse>();
   const [playlistMediaIds, setPlaylistMediaIds] = useState<string[]>([]);
   const [playlistName, setPlaylistName] = useState("New playlist");
   const [playlists, setPlaylists] = useState<Playlist[]>(() =>
@@ -146,12 +169,14 @@ function App() {
   const [uploading, setUploading] = useState(false);
 
   async function refresh() {
-    const [mediaItems, playlistItems, playbackStatus, fallbackStatus] = await Promise.all([
-      getJson<MediaItem[]>("/media"),
-      getJson<Playlist[]>("/playlists"),
-      getJson<PlaybackStatus>("/playback/status"),
-      getJson<FallbackResponse>("/fallback/youtube")
-    ]);
+    const [mediaItems, playlistItems, playbackStatus, fallbackStatus, logsStatus] =
+      await Promise.all([
+        getJson<MediaItem[]>("/media"),
+        getJson<Playlist[]>("/playlists"),
+        getJson<PlaybackStatus>("/playback/status"),
+        getJson<FallbackResponse>("/fallback/youtube"),
+        getJson<LogsResponse>("/logs")
+      ]);
 
     if (Array.isArray(mediaItems)) {
       setMedia(mediaItems);
@@ -165,6 +190,10 @@ function App() {
 
     if (playbackStatus) {
       setStatus(playbackStatus);
+    }
+
+    if (logsStatus) {
+      setLogs(logsStatus);
     }
 
     if (fallbackStatus && !fallbackDirtyRef.current) {
@@ -354,7 +383,9 @@ function App() {
       return;
     }
 
-    if (fallbackItems.some((item) => canonicalInputUrl(item.url) === canonicalInputUrl(fallbackUrl))) {
+    if (
+      fallbackItems.some((item) => canonicalInputUrl(item.url) === canonicalInputUrl(fallbackUrl))
+    ) {
       setFallbackMessage("That fallback video is already in the queue.");
       return;
     }
@@ -601,7 +632,7 @@ function App() {
                 <Tabs.Tab value="main">Main</Tabs.Tab>
                 <Tabs.Tab value="media">Media</Tabs.Tab>
                 <Tabs.Tab value="fallback">Fallback</Tabs.Tab>
-                <Tabs.Tab value="events">Events</Tabs.Tab>
+                <Tabs.Tab value="logs">Logs</Tabs.Tab>
               </Tabs.List>
 
               <Tabs.Panel value="main">
@@ -699,7 +730,9 @@ function App() {
                   fallbackEnabled={status?.fallbackEnabled ?? true}
                   items={fallbackItems}
                   message={fallbackMessage}
-                  {...(status?.remoteSupportUrl ? { remoteSupportUrl: status.remoteSupportUrl } : {})}
+                  {...(status?.remoteSupportUrl
+                    ? { remoteSupportUrl: status.remoteSupportUrl }
+                    : {})}
                   url={fallbackUrl}
                   onAdd={addFallbackItem}
                   onDiscard={() => void discardFallbackChanges()}
@@ -711,8 +744,8 @@ function App() {
                 />
               </Tabs.Panel>
 
-              <Tabs.Panel value="events">
-                <EventsPanel status={status} />
+              <Tabs.Panel value="logs">
+                <LogsPanel logs={logs} />
               </Tabs.Panel>
             </Tabs>
           </Container>
@@ -823,15 +856,17 @@ function QueuePanel(props: {
   onRemove: (id: string) => void;
   onReset: () => void;
 }) {
+  const visibleQueue =
+    props.status?.queue.filter((entry) => isVisibleQueueEntry(entry, props.mediaById)) ?? [];
+  const durationSummary = queueDurationSummary(visibleQueue, props.mediaById, props.status?.state);
+
   return (
     <Card withBorder radius="md" shadow="xs">
       <Stack gap="sm">
         <Group justify="space-between">
           <Group gap="xs">
             <Title order={3}>Queue</Title>
-            {props.status?.queue.length ? (
-              <Badge variant="light">{props.status.queue.length}</Badge>
-            ) : null}
+            {visibleQueue.length ? <Badge variant="light">{visibleQueue.length}</Badge> : null}
           </Group>
           <Group gap="xs">
             <Button size="xs" variant="light" onClick={() => props.onClearCompleted()}>
@@ -842,12 +877,22 @@ function QueuePanel(props: {
             </Button>
           </Group>
         </Group>
+        {visibleQueue.length ? (
+          <Group gap="xs">
+            <Badge color="gray" variant="light">
+              Total {durationSummary.total}
+            </Badge>
+            <Badge color="sage" variant="light">
+              Remaining {durationSummary.remaining}
+            </Badge>
+          </Group>
+        ) : null}
         {props.message ? (
           <Alert color="yellow" variant="light">
             {props.message}
           </Alert>
         ) : null}
-        {props.status?.queue.length ? (
+        {visibleQueue.length ? (
           <ScrollArea.Autosize mah={520}>
             <Table highlightOnHover verticalSpacing="sm">
               <Table.Thead>
@@ -859,7 +904,7 @@ function QueuePanel(props: {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {props.status.queue.map((entry) => (
+                {visibleQueue.map((entry) => (
                   <QueueRow
                     entry={entry}
                     key={entry.id}
@@ -895,14 +940,20 @@ function QueueRow(props: {
   const canMoveUp = queuedIndex > 0;
   const canMoveDown = queuedIndex >= 0 && queuedIndex < props.queuedIds.length - 1;
   const canPlay = !["starting", "playing", "paused", "cancelled"].includes(props.entry.status);
+  const canRemove = props.entry.status === "queued" || isTerminalQueueStatus(props.entry.status);
   const disabledReason = props.running
     ? "Stop playback before reordering."
     : "Only queued items with a queued neighbor can move.";
+  const playedFor = playedDurationText(props.entry);
+  const expectedDuration = formatDuration(props.media?.expectedDurationSeconds);
 
   return (
     <Table.Tr>
       <Table.Td>
-        <Text fw={600}>{props.media?.title ?? props.entry.mediaItemId}</Text>
+        <Text fw={600}>
+          {props.media?.title ?? props.entry.mediaItemId}
+          {expectedDuration ? ` (${expectedDuration})` : ""}
+        </Text>
         <Text c="dimmed" size="sm">
           #{props.entry.position}
         </Text>
@@ -919,9 +970,14 @@ function QueueRow(props: {
         </Badge>
       </Table.Td>
       <Table.Td>
-        <Badge color={statusColor(props.entry.status)} variant="light">
+        <Badge color={statusColor(props.entry.status)} variant={statusVariant(props.entry.status)}>
           {props.entry.status}
         </Badge>
+        {playedFor ? (
+          <Text c="dimmed" mt={4} size="xs">
+            Played for {playedFor}
+          </Text>
+        ) : null}
       </Table.Td>
       <Table.Td>
         <Group gap={4} justify="flex-end" wrap="nowrap">
@@ -964,6 +1020,16 @@ function QueueRow(props: {
                 <IconTrash size={16} />
               </ActionIcon>
             </>
+          ) : null}
+          {canRemove && props.entry.status !== "queued" ? (
+            <ActionIcon
+              aria-label="Remove"
+              color="red"
+              variant="light"
+              onClick={() => props.onRemove(props.entry.id)}
+            >
+              <IconTrash size={16} />
+            </ActionIcon>
           ) : null}
         </Group>
       </Table.Td>
@@ -1348,34 +1414,66 @@ function PlaylistList(props: {
   );
 }
 
-function EventsPanel(props: { status: PlaybackStatus | undefined }) {
+function LogsPanel(props: { logs: LogsResponse | undefined }) {
+  const errorCount = props.logs?.entries.filter((entry) => entry.severity === "error").length ?? 0;
+
   return (
     <Card withBorder radius="md" shadow="xs">
-      <Stack gap="sm">
-        <Title order={3}>Output events</Title>
-        {props.status?.events.length ? (
+      <Stack gap="md">
+        <Group justify="space-between" align="start">
+          <Box>
+            <Title order={3}>24-hour logs</Title>
+            <Text c="dimmed" size="sm">
+              Playback activity, commands, buffering, and failures from the last 24 hours.
+            </Text>
+          </Box>
+          <Badge color={errorCount ? "red" : "sage"} variant="light">
+            {errorCount} errors
+          </Badge>
+        </Group>
+
+        {props.logs?.entries.length ? (
           <ScrollArea.Autosize mah={620}>
             <Table highlightOnHover verticalSpacing="sm">
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Time</Table.Th>
-                  <Table.Th>Event</Table.Th>
+                  <Table.Th>Level</Table.Th>
+                  <Table.Th>Source</Table.Th>
+                  <Table.Th>What happened</Table.Th>
                   <Table.Th>Details</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {props.status.events.map((event) => (
-                  <Table.Tr key={event.id}>
-                    <Table.Td>{new Date(event.createdAt).toLocaleTimeString()}</Table.Td>
+                {props.logs.entries.map((entry) => (
+                  <Table.Tr key={entry.id}>
+                    <Table.Td className="log-time">
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </Table.Td>
                     <Table.Td>
-                      <Badge color={event.type === "FAILED" ? "red" : "gray"} variant="light">
-                        {event.type}
+                      <Badge color={severityColor(entry.severity)} variant="light">
+                        {entry.severity}
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Text component="code" size="sm">
-                        {formatDetail(event.details.from)} -&gt; {formatDetail(event.details.to)}
-                        {event.type === "FAILED" ? ` (${formatDetail(event.details.code)})` : ""}
+                      <Badge color={entry.source === "dashboard" ? "blue" : "gray"} variant="light">
+                        {entry.source}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text fw={700} size="sm">
+                        {entry.title}
+                      </Text>
+                      <Text size="sm">{entry.description}</Text>
+                      {entry.mediaTitle ? (
+                        <Text c="dimmed" size="xs">
+                          {entry.mediaTitle}
+                        </Text>
+                      ) : null}
+                    </Table.Td>
+                    <Table.Td>
+                      <Text className="log-details" component="code" size="xs">
+                        {formatLogDetails(entry.details)}
                       </Text>
                     </Table.Td>
                   </Table.Tr>
@@ -1384,7 +1482,7 @@ function EventsPanel(props: { status: PlaybackStatus | undefined }) {
             </Table>
           </ScrollArea.Autosize>
         ) : (
-          <Text c="dimmed">No events yet.</Text>
+          <Text c="dimmed">No logs in the last 24 hours.</Text>
         )}
       </Stack>
     </Card>
@@ -1431,10 +1529,18 @@ function saveCachedArray<T>(key: string, values: T[]): void {
   }
 }
 
-function formatDetail(value: unknown): string {
-  return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-    ? String(value)
-    : "?";
+function severityColor(severity: PlaybackLogEntry["severity"]): string {
+  if (severity === "error") return "red";
+  if (severity === "warning") return "yellow";
+  return "gray";
+}
+
+function formatLogDetails(details: Record<string, unknown>): string {
+  const visible = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}: ${String(value)}`);
+
+  return visible.length ? visible.join(" | ") : "-";
 }
 
 function scenarioLabel(item: MediaItem | undefined): string {
@@ -1444,11 +1550,97 @@ function scenarioLabel(item: MediaItem | undefined): string {
 }
 
 function statusColor(status: string): string {
-  if (status === "playing" || status === "starting") return "sage";
+  if (status === "playing") return "green";
+  if (status === "starting") return "sage";
   if (status === "failed") return "red";
   if (status === "paused") return "indigo";
   if (status === "skipped" || status === "cancelled") return "gray";
   return "orange";
+}
+
+function statusVariant(status: string): "filled" | "light" {
+  return status === "playing" ? "filled" : "light";
+}
+
+function isVisibleQueueEntry(entry: QueueEntry, mediaById: Map<string, MediaItem>): boolean {
+  return mediaById.has(entry.mediaItemId);
+}
+
+function isTerminalQueueStatus(status: string): boolean {
+  return ["completed", "failed", "skipped", "cancelled"].includes(status);
+}
+
+function queueDurationSummary(
+  queue: QueueEntry[],
+  mediaById: Map<string, MediaItem>,
+  state: PlaybackStatus["state"] | undefined
+): { remaining: string; total: string } {
+  const totalSeconds = queue.reduce(
+    (total, entry) => total + (mediaById.get(entry.mediaItemId)?.expectedDurationSeconds ?? 0),
+    0
+  );
+  const remainingSeconds = queue.reduce(
+    (total, entry) => total + remainingQueueSeconds(entry, mediaById.get(entry.mediaItemId), state),
+    0
+  );
+
+  return {
+    remaining: formatDuration(remainingSeconds) ?? "unknown",
+    total: formatDuration(totalSeconds) ?? "unknown"
+  };
+}
+
+function remainingQueueSeconds(
+  entry: QueueEntry,
+  media: MediaItem | undefined,
+  state: PlaybackStatus["state"] | undefined
+): number {
+  const duration = media?.expectedDurationSeconds ?? 0;
+
+  if (!duration || isTerminalQueueStatus(entry.status) || entry.status === "cancelled") {
+    return 0;
+  }
+
+  if (entry.status === "playing" || entry.status === "starting" || entry.status === "paused") {
+    const position =
+      (state?.queueEntryId === entry.id || state?.mediaItemId === entry.mediaItemId) &&
+      typeof state.positionSeconds === "number"
+        ? state.positionSeconds
+        : 0;
+    return Math.max(0, duration - position);
+  }
+
+  return entry.status === "queued" ? duration : 0;
+}
+
+function playedDurationText(entry: QueueEntry): string | undefined {
+  if (
+    !["completed", "failed", "skipped"].includes(entry.status) ||
+    !entry.startedAt ||
+    !entry.completedAt
+  ) {
+    return undefined;
+  }
+
+  const seconds = Math.max(
+    0,
+    Math.round((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
+  );
+
+  return formatDuration(seconds);
+}
+
+function formatDuration(seconds: number | undefined): string | undefined {
+  if (seconds === undefined) return undefined;
+  if (seconds <= 0) return "0s";
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds / 60);
+  const remainingMinutes = minutes % 60;
+  const remainingSeconds = Math.round(seconds % 60);
+
+  if (hours) return `${hours}h ${remainingMinutes}m`;
+  return minutes ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
 }
 
 function currentPlaybackIssue(
@@ -1498,10 +1690,13 @@ function playbackIssueFor(
       title: string;
     }
   | undefined {
-  const service = media?.service === "youtube" || media?.service === "prime" ? media.service : undefined;
+  const service =
+    media?.service === "youtube" || media?.service === "prime" ? media.service : undefined;
 
   if (code.startsWith("youtube-")) {
-    const title = media?.title ? `YouTube needs attention: ${media.title}` : "YouTube needs attention";
+    const title = media?.title
+      ? `YouTube needs attention: ${media.title}`
+      : "YouTube needs attention";
 
     if (
       [
@@ -1520,7 +1715,8 @@ function playbackIssueFor(
 
     if (code === "youtube-consent-required") {
       return {
-        message: "YouTube is showing a consent prompt. Open the YouTube login on the appliance and clear the prompt.",
+        message:
+          "YouTube is showing a consent prompt. Open the YouTube login on the appliance and clear the prompt.",
         ...(queueEntryId ? { queueEntryId } : {}),
         service: "youtube",
         title

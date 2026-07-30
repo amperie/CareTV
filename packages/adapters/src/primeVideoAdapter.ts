@@ -106,6 +106,11 @@ export class PrimeVideoAdapter implements StreamingAdapter {
     }
 
     await page.waitForSelector([primeSelectors.video, ...primeSelectors.fullscreenButton], 5_000);
+    await page.setWindowFullscreen();
+
+    if (await primeFullscreen(page)) {
+      return;
+    }
 
     if (await page.clickFirst(primeSelectors.fullscreenButton)) {
       return;
@@ -165,6 +170,8 @@ export class PrimeVideoAdapter implements StreamingAdapter {
   }
 
   public async cleanup(context: AdapterContext): Promise<void> {
+    const session = this.sessions.get(context.mediaItem.id);
+    await session?.page?.close().catch(() => undefined);
     this.sessions.delete(context.mediaItem.id);
   }
 
@@ -200,4 +207,17 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new Error("Adapter operation was aborted.");
   }
+}
+
+function primeFullscreen(page: BrowserPage): Promise<boolean> {
+  return page.evaluate<boolean>(`(() => {
+    const video = document.querySelector("${primeSelectors.video}");
+    const rect = video?.getBoundingClientRect?.();
+    const fillsViewport = Boolean(
+      rect &&
+      rect.width >= window.innerWidth * 0.9 &&
+      rect.height >= window.innerHeight * 0.9
+    );
+    return Boolean(fillsViewport || document.fullscreenElement === video);
+  })()`);
 }
