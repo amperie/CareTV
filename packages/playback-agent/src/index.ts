@@ -91,13 +91,13 @@ export class PlaybackAgent {
     };
 
     try {
-      await adapter.prepare(context);
-      this.apply({ type: "BROWSER_LAUNCHED" });
-      await adapter.start(context);
-      await adapter.enterFullscreen(context);
-      await adapter.resume(context);
-      await adapter.enterFullscreen(context);
-      this.apply({ type: "READY" });
+      if (!(await this.startWithRecovery(queueEntry.id, adapter, context))) {
+        return {
+          status: "failed",
+          queueEntryId: queueEntry.id,
+          errorCode: "browser-recovery-failed"
+        };
+      }
 
       return await this.monitor(queueEntry.id, adapter, context);
     } catch (error) {
@@ -107,6 +107,46 @@ export class PlaybackAgent {
     } finally {
       await adapter.cleanup(context);
     }
+  }
+
+  private async startWithRecovery(
+    queueEntryId: string,
+    adapter: StreamingAdapter,
+    context: Parameters<StreamingAdapter["observe"]>[0]
+  ): Promise<boolean> {
+    try {
+      await this.startPlayback(adapter, context);
+      return true;
+    } catch (error) {
+      if (!isBrowserPageClosedError(error)) {
+        throw error;
+      }
+
+      const attempt = this.state.recoveryAttempt + 1;
+      this.apply({ type: "RECOVERING", attempt });
+      const recovery = await adapter.recover(context, attempt);
+
+      if (!recovery.recovered) {
+        this.fail(queueEntryId, "browser-recovery-failed", recovery.message);
+        return false;
+      }
+
+      this.apply({ type: "PLAYING", positionSeconds: 0 });
+      return true;
+    }
+  }
+
+  private async startPlayback(
+    adapter: StreamingAdapter,
+    context: Parameters<StreamingAdapter["observe"]>[0]
+  ): Promise<void> {
+    await adapter.prepare(context);
+    this.apply({ type: "BROWSER_LAUNCHED" });
+    await adapter.start(context);
+    await adapter.enterFullscreen(context);
+    await adapter.resume(context);
+    await adapter.enterFullscreen(context);
+    this.apply({ type: "READY" });
   }
 
   private async monitor(

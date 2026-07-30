@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -85,6 +85,29 @@ describe("local file adapter", () => {
     await expect(adapter.prepare(context)).rejects.toThrow();
   });
 
+  it("rejects directories and empty files during preparation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "caretv-local-adapter-"));
+    const emptyPath = join(root, "empty.mp4");
+    const directoryPath = join(root, "directory.mp4");
+    writeFileSync(emptyPath, "");
+    mkdirSync(directoryPath);
+
+    try {
+      const adapter = new LocalFileAdapter({
+        openPlayer: () => Promise.resolve(new FakePlayerPage(1))
+      });
+
+      await expect(adapter.prepare(localContext(localMedia(emptyPath, 10)))).rejects.toThrow(
+        /empty/
+      );
+      await expect(adapter.prepare(localContext(localMedia(directoryPath, 10)))).rejects.toThrow(
+        /not a file/
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("fails when Chrome plays audio without decoded video frames", async () => {
     await withMediaFile(async (localPath) => {
       const page = new FakePlayerPage(10);
@@ -103,19 +126,69 @@ describe("local file adapter", () => {
       });
     });
   });
+
+  it("does not complete from fallback duration before the browser observes real duration", async () => {
+    await withMediaFile(async (localPath) => {
+      const page = new FakePlayerPage(undefined);
+      const adapter = new LocalFileAdapter({ openPlayer: () => Promise.resolve(page) });
+      const context = localContext(localMedia(localPath, 5));
+
+      await adapter.prepare(context);
+      await adapter.start(context);
+      page.currentTime = 6;
+
+      expect(await adapter.observe(context)).toMatchObject({
+        details: { durationObserved: false },
+        durationSeconds: 5,
+        positionSeconds: 6,
+        status: "playing"
+      });
+
+      page.ended = true;
+      expect(await adapter.observe(context)).toMatchObject({ status: "completed" });
+    });
+  });
+
+  it("returns useful player diagnostics when playback errors", async () => {
+    await withMediaFile(async (localPath) => {
+      const page = new FakePlayerPage(10);
+      const adapter = new LocalFileAdapter({ openPlayer: () => Promise.resolve(page) });
+      const context = localContext(localMedia(localPath, 10));
+
+      await adapter.prepare(context);
+      await adapter.start(context);
+      page.error = "media-error-4";
+      page.lastEvent = "error";
+      page.networkState = 3;
+
+      expect(await adapter.observe(context)).toMatchObject({
+        details: {
+          durationObserved: true,
+          error: "media-error-4",
+          lastEvent: "error",
+          networkState: 3
+        },
+        errorCode: "local-file-playback-error",
+        status: "error"
+      });
+    });
+  });
 });
 
 class FakePlayerPage implements PlayerPage {
   public closed = false;
   public currentTime = 0;
   public fullscreen = false;
+  public error: string | undefined;
+  public lastEvent = "playing";
+  public networkState = 1;
   public paused = true;
   public playCount = 0;
   public videoHeight = 720;
   public videoWidth = 1280;
-  private ended = false;
+  public ended = false;
 
-  public constructor(private readonly duration: number) {}
+  public constructor(private readonly duration: number | undefined) {}
 
   public close(): Promise<void> {
     this.closed = true;
@@ -145,22 +218,25 @@ class FakePlayerPage implements PlayerPage {
     return Promise.resolve();
   }
 
-  public state() {
+  public state(): Promise<Awaited<ReturnType<PlayerPage["state"]>>> {
     return Promise.resolve({
       currentTime: this.currentTime,
-      duration: this.duration,
       ended: this.ended,
       fullscreen: this.fullscreen,
+      lastEvent: this.lastEvent,
+      networkState: this.networkState,
       paused: this.paused,
       readyState: 4,
       videoHeight: this.videoHeight,
-      videoWidth: this.videoWidth
+      videoWidth: this.videoWidth,
+      ...(this.duration !== undefined ? { duration: this.duration } : {}),
+      ...(this.error !== undefined ? { error: this.error } : {})
     });
   }
 
   public stop(): Promise<void> {
     this.ended = true;
-    this.currentTime = this.duration;
+    this.currentTime = this.duration ?? this.currentTime;
     this.paused = true;
     return Promise.resolve();
   }

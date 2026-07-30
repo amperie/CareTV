@@ -360,6 +360,25 @@ describe("database repositories", () => {
     });
   });
 
+  it("updates observed media duration", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+
+      media.create({
+        ...fakeMedia("youtube-1"),
+        service: "youtube",
+        mediaType: "video",
+        url: "https://www.youtube.com/watch?v=abc123"
+      });
+
+      expect(media.updateExpectedDuration("youtube-1", 7212, now)).toBe(true);
+      expect(media.get("youtube-1")).toMatchObject({
+        expectedDurationSeconds: 7212,
+        metadata: { durationObserved: 1 }
+      });
+    });
+  });
+
   it("upserts local media and tracks appliance downloads", () => {
     withMigratedDatabase((db) => {
       const downloads = new MediaDownloadRepository(db);

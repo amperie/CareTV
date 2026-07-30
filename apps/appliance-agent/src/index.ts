@@ -1,4 +1,7 @@
-import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { access, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
@@ -179,14 +182,17 @@ async function processDownloads(): Promise<void> {
   await mkdir(config.values.applianceMediaDir, { recursive: true });
 
   for (const download of await client.pendingDownloads()) {
-    const localPath = join(config.values.applianceMediaDir, safeFilename(download.filename));
+    const localPath = await uniqueLocalPath(config.values.applianceMediaDir, download.filename);
+    const tempPath = `${localPath}.part`;
 
     try {
-      const bytes = await client.downloadFile(download.url);
-      await writeFile(localPath, bytes);
+      await removeFileIfExists(tempPath);
+      await client.downloadFile(download.url, tempPath);
+      await rename(tempPath, localPath);
       await client.completeDownload(download.id, localPath);
       nextMediaScanAt = 0;
     } catch (error) {
+      await removeFileIfExists(tempPath);
       await client.failDownload(
         download.id,
         error instanceof Error ? error.message : "Download failed."
@@ -262,13 +268,9 @@ async function play(queueEntry: QueueEntry): Promise<void> {
       adapterId: adapter.id,
       title: mediaItem.title
     });
-    await adapter.prepare(context);
-    await apply({ type: "BROWSER_LAUNCHED" });
-    await adapter.start(context);
-    await adapter.enterFullscreen(context);
-    await adapter.resume(context);
-    await adapter.enterFullscreen(context);
-    await apply({ type: "READY" });
+    if (!(await startWithRecovery(queueEntry.id, adapter, context))) {
+      return;
+    }
 
     await monitor(queueEntry, mediaItem, adapter, context);
   } catch (error) {
@@ -281,6 +283,46 @@ async function play(queueEntry: QueueEntry): Promise<void> {
     await adapter.cleanup(context);
     await heartbeat(true);
   }
+}
+
+async function startWithRecovery(
+  queueEntryId: string,
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext
+): Promise<boolean> {
+  try {
+    await startPlayback(streamingAdapter, context);
+    return true;
+  } catch (error) {
+    if (!isBrowserPageClosedError(error)) {
+      throw error;
+    }
+
+    const attempt = state.recoveryAttempt + 1;
+    await apply({ type: "RECOVERING", attempt });
+    const recovery = await streamingAdapter.recover(context, attempt);
+
+    if (!recovery.recovered) {
+      await fail(queueEntryId, "browser-recovery-failed", recovery.message);
+      return false;
+    }
+
+    await apply({ type: "PLAYING", positionSeconds: 0 });
+    return true;
+  }
+}
+
+async function startPlayback(
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext
+): Promise<void> {
+  await streamingAdapter.prepare(context);
+  await apply({ type: "BROWSER_LAUNCHED" });
+  await streamingAdapter.start(context);
+  await streamingAdapter.enterFullscreen(context);
+  await streamingAdapter.resume(context);
+  await streamingAdapter.enterFullscreen(context);
+  await apply({ type: "READY" });
 }
 
 async function monitor(
@@ -315,6 +357,7 @@ async function monitor(
     }
 
     maxRuntimeMs = Math.max(maxRuntimeMs, maxRuntimeMsForObservation(observation));
+    await syncObservedDuration(mediaItem, observation);
     nextFullscreenCheckAt = await maintainFullscreen(
       streamingAdapter,
       context,
@@ -519,6 +562,36 @@ async function fail(queueEntryId: string, code: string, message: string): Promis
   }
 }
 
+async function syncObservedDuration(
+  mediaItem: MediaItem,
+  observation: PlaybackObservation
+): Promise<void> {
+  const durationSeconds = observation.durationSeconds;
+
+  if (
+    observation.details?.durationObserved !== true ||
+    typeof durationSeconds !== "number" ||
+    !Number.isFinite(durationSeconds) ||
+    Math.floor(durationSeconds) === mediaItem.expectedDurationSeconds
+  ) {
+    return;
+  }
+
+  const observedDurationSeconds = Math.max(1, Math.floor(durationSeconds));
+  await client.updateMediaDuration(mediaItem.id, observedDurationSeconds).catch((error) =>
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Observed media duration update failed.",
+        mediaItemId: mediaItem.id,
+        durationSeconds: observedDurationSeconds,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    )
+  );
+  mediaItem.expectedDurationSeconds = observedDurationSeconds;
+}
+
 async function apply(event: PlaybackStateEvent): Promise<void> {
   const result = transition(state, event, {
     createId: () => crypto.randomUUID(),
@@ -684,14 +757,31 @@ class ServerClient {
     return this.post(`/api/v1/appliance/downloads/${id}/fail`, { message });
   }
 
-  public async downloadFile(path: string): Promise<Buffer> {
+  public async downloadFile(path: string, destinationPath: string): Promise<void> {
     const response = await this.fetch("GET", path);
 
     if (!response.ok) {
       throw new Error(`GET ${path} failed with ${response.status}`);
     }
 
-    return Buffer.from(await response.arrayBuffer());
+    if (!response.body) {
+      throw new Error(`GET ${path} did not return a body`);
+    }
+
+    await pipeline(
+      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+      createWriteStream(destinationPath, { flags: "wx" })
+    );
+
+    const expectedBytes = Number(response.headers.get("content-length"));
+
+    if (Number.isFinite(expectedBytes)) {
+      const file = await stat(destinationPath);
+
+      if (file.size !== expectedBytes) {
+        throw new Error(`Downloaded ${file.size} bytes; expected ${expectedBytes}.`);
+      }
+    }
   }
 
   public claimNextQueueEntry() {
@@ -730,6 +820,10 @@ class ServerClient {
     fields: Record<string, unknown> = {}
   ) {
     return this.post(`/api/v1/appliance/queue/${id}/status`, { status, ...fields });
+  }
+
+  public updateMediaDuration(id: string, durationSeconds: number) {
+    return this.post(`/api/v1/appliance/media/${id}/duration`, { durationSeconds });
   }
 
   public appendEvent(event: {
@@ -873,6 +967,46 @@ function safeFilename(input: string): string {
       .replace(/[^a-zA-Z0-9._ -]/g, "_")
       .trim() || "upload.bin"
   );
+}
+
+async function uniqueLocalPath(directory: string, filename: string): Promise<string> {
+  const safe = safeFilename(filename);
+  const extension = extname(safe);
+  const stem = basename(safe, extension);
+
+  for (let index = 0; index < 1000; index += 1) {
+    const candidate =
+      index === 0 ? join(directory, safe) : join(directory, `${stem} (${index + 1})${extension}`);
+
+    if (!(await pathExists(candidate))) {
+      return candidate;
+    }
+  }
+
+  return join(directory, `${crypto.randomUUID()}-${safe}`);
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function removeFileIfExists(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+  }
 }
 
 function titleFromFilename(input: string): string {

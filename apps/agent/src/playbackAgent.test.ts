@@ -125,6 +125,24 @@ describe("PlaybackAgent", () => {
       expect(harness.events.listRecent(20).map((event) => event.type)).toContain("RECOVERING");
     });
   });
+
+  it("recovers the current queue item when the browser page closes during startup", async () => {
+    const adapter = new BrowserClosedOnStartThenCompletedAdapter();
+
+    await withHarness(async (harness) => {
+      harness.agent = harness.createAgent([adapter]);
+      harness.media.create(fakeMedia({ durationSeconds: 2 }));
+      harness.queue.enqueue(fakeQueueEntry());
+
+      expect(await harness.agent.runOnce()).toEqual({
+        status: "completed",
+        queueEntryId: "queue-1"
+      });
+      expect(adapter.recoverCount).toBe(1);
+      expect(harness.queue.get("queue-1")).toMatchObject({ status: "completed" });
+      expect(harness.events.listRecent(20).map((event) => event.type)).toContain("RECOVERING");
+    });
+  });
 });
 
 async function withHarness(test: (harness: Harness) => Promise<void>): Promise<void> {
@@ -353,6 +371,68 @@ class BrowserClosedThenCompletedAdapter implements StreamingAdapter {
       return Promise.reject(new Error(browserPageClosedCode));
     }
 
+    return Promise.resolve({ status: "completed", positionSeconds: 2 });
+  }
+
+  public dismissKnownInterruptions(): Promise<boolean> {
+    return Promise.resolve(false);
+  }
+
+  public recover(): Promise<RecoveryResult> {
+    this.recoverCount += 1;
+    return Promise.resolve({ recovered: true, message: "recovered" });
+  }
+
+  public cleanup(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+class BrowserClosedOnStartThenCompletedAdapter implements StreamingAdapter {
+  public readonly id = "browser-closed-on-start-then-completed";
+  public readonly version = "0.1.0";
+  public recoverCount = 0;
+  private startCount = 0;
+
+  public supports(): boolean {
+    return true;
+  }
+
+  public prepare(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public start(): Promise<void> {
+    this.startCount += 1;
+
+    if (this.startCount === 1) {
+      return Promise.reject(new Error(browserPageClosedCode));
+    }
+
+    return Promise.resolve();
+  }
+
+  public pause(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public restart(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public resume(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public stop(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public enterFullscreen(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  public observe(): Promise<PlaybackObservation> {
     return Promise.resolve({ status: "completed", positionSeconds: 2 });
   }
 

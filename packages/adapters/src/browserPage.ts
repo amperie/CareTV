@@ -55,11 +55,13 @@ export class ChromeBrowser {
       } catch (error) {
         this.page = undefined;
 
-        if (attempt > 0 || !isCreateTargetError(error)) {
+        if (attempt > 0 || !isRecoverableOpenError(error)) {
           throw error;
         }
 
-        await this.restartBrowser();
+        if (isCreateTargetError(error)) {
+          await this.restartBrowser();
+        }
       }
     }
 
@@ -514,6 +516,10 @@ async function waitForDebugPort(port: number): Promise<void> {
 
 function isCreateTargetError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Chrome target creation failed");
+}
+
+function isRecoverableOpenError(error: unknown): boolean {
+  return isCreateTargetError(error) || isBrowserPageClosedError(error);
 }
 
 function wait(milliseconds: number): Promise<void> {

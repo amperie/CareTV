@@ -21,21 +21,27 @@ export function videoObservation(
   }
 
   const positionSeconds = Math.max(0, Math.floor(state.currentTime ?? 0));
-  const durationSeconds = Math.max(1, Math.floor(state.duration ?? fallbackDurationSeconds));
+  const observedDuration =
+    typeof state.duration === "number" && Number.isFinite(state.duration)
+      ? Math.floor(state.duration)
+      : undefined;
+  const durationSeconds = Math.max(1, observedDuration ?? fallbackDurationSeconds);
+  const details = observedDuration ? { durationObserved: true } : undefined;
 
   if (state.ended || positionSeconds >= durationSeconds) {
-    return observation("completed", positionSeconds, durationSeconds, state.fullscreen);
+    return observation("completed", positionSeconds, durationSeconds, state.fullscreen, details);
   }
 
   if ((state.readyState ?? 0) < 2) {
-    return observation("buffering", positionSeconds, durationSeconds, state.fullscreen);
+    return observation("buffering", positionSeconds, durationSeconds, state.fullscreen, details);
   }
 
   return observation(
     state.paused ? "paused" : "playing",
     positionSeconds,
     durationSeconds,
-    state.fullscreen
+    state.fullscreen,
+    details
   );
 }
 
@@ -52,7 +58,8 @@ function observation(
   status: PlaybackObservation["status"],
   positionSeconds: number,
   durationSeconds: number,
-  fullscreen = false
+  fullscreen = false,
+  details?: Record<string, unknown>
 ): PlaybackObservation {
-  return { durationSeconds, fullscreen, positionSeconds, status };
+  return { durationSeconds, fullscreen, positionSeconds, status, ...(details ? { details } : {}) };
 }

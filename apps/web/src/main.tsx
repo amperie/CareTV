@@ -166,6 +166,7 @@ function App() {
   const [queueMessage, setQueueMessage] = useState("");
   const [status, setStatus] = useState<PlaybackStatus>();
   const [streamingUrl, setStreamingUrl] = useState("");
+  const [uploadProgress, setUploadProgress] = useState<number>();
   const [uploading, setUploading] = useState(false);
 
   async function refresh() {
@@ -273,18 +274,17 @@ function App() {
   async function uploadMedia(file: File | undefined) {
     if (!file) return;
     setUploading(true);
+    setUploadProgress(0);
     setQueueMessage("");
     try {
-      await request(`/uploads?filename=${encodeURIComponent(file.name)}`, {
-        body: await file.arrayBuffer(),
-        headers: { "content-type": "application/octet-stream" },
-        method: "POST"
-      });
+      await uploadFile(file, (progress) => setUploadProgress(progress));
+      setQueueMessage(`Upload queued for appliance download: ${file.name}`);
       await refresh();
     } catch {
       setQueueMessage("Upload failed.");
     } finally {
       setUploading(false);
+      setUploadProgress(undefined);
     }
   }
 
@@ -673,6 +673,7 @@ function App() {
                         discoveredMedia={discoveredMedia}
                         mediaSearch={mediaSearch}
                         playlistMediaIds={playlistMediaIds}
+                        uploadProgress={uploadProgress}
                         uploading={uploading}
                         onDelete={(id) => void deleteMedia(id)}
                         onEnqueue={(id) => void enqueueMedia(id)}
@@ -878,13 +879,19 @@ function QueuePanel(props: {
           </Group>
         </Group>
         {visibleQueue.length ? (
-          <Group gap="xs">
-            <Badge color="gray" variant="light">
-              Total {durationSummary.total}
-            </Badge>
-            <Badge color="sage" variant="light">
-              Remaining {durationSummary.remaining}
-            </Badge>
+          <Group gap="md">
+            <Text c="dimmed" fw={700} size="sm">
+              Total playing time:{" "}
+              <Text component="span" c="var(--mantine-color-text)">
+                {durationSummary.total}
+              </Text>
+            </Text>
+            <Text c="dimmed" fw={700} size="sm">
+              Playing time left:{" "}
+              <Text component="span" c="var(--mantine-color-text)">
+                {durationSummary.remaining}
+              </Text>
+            </Text>
           </Group>
         ) : null}
         {props.message ? (
@@ -945,7 +952,7 @@ function QueueRow(props: {
     ? "Stop playback before reordering."
     : "Only queued items with a queued neighbor can move.";
   const playedFor = playedDurationText(props.entry);
-  const expectedDuration = formatDuration(props.media?.expectedDurationSeconds);
+  const expectedDuration = formatDuration(trustedDurationSeconds(props.media));
 
   return (
     <Table.Tr>
@@ -1041,6 +1048,7 @@ function MediaPanel(props: {
   discoveredMedia: MediaItem[];
   mediaSearch: string;
   playlistMediaIds: string[];
+  uploadProgress: number | undefined;
   uploading: boolean;
   onDelete: (id: string) => void;
   onEnqueue: (id: string) => void;
@@ -1070,6 +1078,9 @@ function MediaPanel(props: {
             )}
           </FileButton>
         </Group>
+        {props.uploading && props.uploadProgress !== undefined ? (
+          <Progress aria-label="Upload progress" value={props.uploadProgress} striped animated />
+        ) : null}
         <TextInput
           leftSection={<IconSearch size={16} />}
           placeholder="Search discovered media"
@@ -1497,6 +1508,30 @@ async function post(path: string, body: Record<string, unknown>, method = "POST"
   });
 }
 
+function uploadFile(file: File, onProgress: (progress: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${apiBase}/uploads?filename=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress(100);
+        resolve();
+      } else {
+        reject(new Error(`Upload failed: ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Upload failed."));
+    xhr.onabort = () => reject(new Error("Upload aborted."));
+    xhr.send(file);
+  });
+}
+
 async function request(path: string, init: RequestInit) {
   const response = await fetch(`${apiBase}${path}`, init);
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
@@ -1575,18 +1610,23 @@ function queueDurationSummary(
   mediaById: Map<string, MediaItem>,
   state: PlaybackStatus["state"] | undefined
 ): { remaining: string; total: string } {
-  const totalSeconds = queue.reduce(
-    (total, entry) => total + (mediaById.get(entry.mediaItemId)?.expectedDurationSeconds ?? 0),
-    0
+  const total = queue.reduce(
+    (summary, entry) =>
+      addDuration(
+        summary,
+        queueEntryDurationSeconds(entry, mediaById.get(entry.mediaItemId), state)
+      ),
+    emptyDurationSummary()
   );
-  const remainingSeconds = queue.reduce(
-    (total, entry) => total + remainingQueueSeconds(entry, mediaById.get(entry.mediaItemId), state),
-    0
+  const remaining = queue.reduce(
+    (summary, entry) =>
+      addDuration(summary, remainingQueueSeconds(entry, mediaById.get(entry.mediaItemId), state)),
+    emptyDurationSummary()
   );
 
   return {
-    remaining: formatDuration(remainingSeconds) ?? "unknown",
-    total: formatDuration(totalSeconds) ?? "unknown"
+    remaining: formatDurationSummary(remaining),
+    total: formatDurationSummary(total)
   };
 }
 
@@ -1594,14 +1634,15 @@ function remainingQueueSeconds(
   entry: QueueEntry,
   media: MediaItem | undefined,
   state: PlaybackStatus["state"] | undefined
-): number {
-  const duration = media?.expectedDurationSeconds ?? 0;
+): number | undefined {
+  const duration = queueEntryExpectedDurationSeconds(entry, media, state);
 
-  if (!duration || isTerminalQueueStatus(entry.status) || entry.status === "cancelled") {
+  if (isTerminalQueueStatus(entry.status) || entry.status === "cancelled") {
     return 0;
   }
 
   if (entry.status === "playing" || entry.status === "starting" || entry.status === "paused") {
+    if (!duration) return undefined;
     const position =
       (state?.queueEntryId === entry.id || state?.mediaItemId === entry.mediaItemId) &&
       typeof state.positionSeconds === "number"
@@ -1613,6 +1654,73 @@ function remainingQueueSeconds(
   return entry.status === "queued" ? duration : 0;
 }
 
+function queueEntryDurationSeconds(
+  entry: QueueEntry,
+  media: MediaItem | undefined,
+  state: PlaybackStatus["state"] | undefined
+): number | undefined {
+  if (isTerminalQueueStatus(entry.status)) {
+    return playedDurationSeconds(entry) ?? queueEntryExpectedDurationSeconds(entry, media, state);
+  }
+
+  return queueEntryExpectedDurationSeconds(entry, media, state);
+}
+
+function queueEntryExpectedDurationSeconds(
+  entry: QueueEntry,
+  media: MediaItem | undefined,
+  state: PlaybackStatus["state"] | undefined
+): number | undefined {
+  if (
+    (state?.queueEntryId === entry.id || state?.mediaItemId === entry.mediaItemId) &&
+    typeof state.durationSeconds === "number" &&
+    Number.isFinite(state.durationSeconds)
+  ) {
+    return Math.max(1, Math.floor(state.durationSeconds));
+  }
+
+  return trustedDurationSeconds(media);
+}
+
+function emptyDurationSummary(): { seconds: number; unknown: number } {
+  return { seconds: 0, unknown: 0 };
+}
+
+function addDuration(
+  summary: { seconds: number; unknown: number },
+  seconds: number | undefined
+): { seconds: number; unknown: number } {
+  return seconds === undefined
+    ? { ...summary, unknown: summary.unknown + 1 }
+    : { ...summary, seconds: summary.seconds + seconds };
+}
+
+function formatDurationSummary(summary: { seconds: number; unknown: number }): string {
+  const known = formatDuration(summary.seconds);
+  const unknown = summary.unknown
+    ? `${summary.unknown} unknown ${summary.unknown === 1 ? "item" : "items"}`
+    : "";
+
+  if (known && unknown) return `${known} + ${unknown}`;
+  return known || unknown || "0s";
+}
+
+function trustedDurationSeconds(media: MediaItem | undefined): number | undefined {
+  if (!media?.expectedDurationSeconds) {
+    return undefined;
+  }
+
+  if (
+    media.service === "youtube" &&
+    media.expectedDurationSeconds === 900 &&
+    media.metadata.durationObserved !== 1
+  ) {
+    return undefined;
+  }
+
+  return media.expectedDurationSeconds;
+}
+
 function playedDurationText(entry: QueueEntry): string | undefined {
   if (
     !["completed", "failed", "skipped"].includes(entry.status) ||
@@ -1622,12 +1730,15 @@ function playedDurationText(entry: QueueEntry): string | undefined {
     return undefined;
   }
 
-  const seconds = Math.max(
+  return formatDuration(playedDurationSeconds(entry));
+}
+
+function playedDurationSeconds(entry: QueueEntry): number | undefined {
+  if (!entry.startedAt || !entry.completedAt) return undefined;
+  return Math.max(
     0,
     Math.round((new Date(entry.completedAt).getTime() - new Date(entry.startedAt).getTime()) / 1000)
   );
-
-  return formatDuration(seconds);
 }
 
 function formatDuration(seconds: number | undefined): string | undefined {

@@ -105,6 +105,22 @@ export class MediaRepository {
     return Number(result.changes) > 0;
   }
 
+  public updateExpectedDuration(id: string, durationSeconds: number, updatedAt: string): boolean {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE media_items
+          SET expected_duration_seconds = ?,
+              metadata_json = json_set(metadata_json, '$.durationObserved', 1),
+              updated_at = ?
+          WHERE id = ? AND deleted_at IS NULL
+        `
+      )
+      .run(durationSeconds, updatedAt, id);
+
+    return Number(result.changes) > 0;
+  }
+
   public get(id: string): MediaItem | undefined {
     const row = this.db
       .prepare("SELECT * FROM media_items WHERE id = ? AND deleted_at IS NULL")

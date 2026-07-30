@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +15,7 @@ import type {
 } from "./contract.js";
 
 interface LocalFileSession {
+  localPath: string;
   page?: PlayerPage;
 }
 
@@ -23,6 +24,9 @@ interface PlayerState {
   duration?: number;
   ended: boolean;
   error?: string;
+  lastEvent?: string;
+  networkState?: number;
+  src?: string;
   fullscreen: boolean;
   paused: boolean;
   readyState: number;
@@ -72,14 +76,25 @@ export class LocalFileAdapter implements StreamingAdapter {
 
   public async prepare(context: AdapterContext): Promise<void> {
     throwIfAborted(context.signal);
-    await stat(localPathFor(context.mediaItem));
-    this.sessions.set(context.mediaItem.id, {});
+    const localPath = localPathFor(context.mediaItem);
+    const file = await stat(localPath);
+
+    if (!file.isFile()) {
+      throw new Error(`Local media item ${context.mediaItem.id} is not a file: ${localPath}`);
+    }
+
+    if (file.size <= 0) {
+      throw new Error(`Local media item ${context.mediaItem.id} is empty: ${localPath}`);
+    }
+
+    await access(localPath);
+    this.sessions.set(context.mediaItem.id, { localPath });
   }
 
   public async start(context: AdapterContext): Promise<void> {
     throwIfAborted(context.signal);
     const session = this.session(context);
-    session.page ??= await this.openPlayer(localPathFor(context.mediaItem));
+    session.page ??= await this.openPlayer(session.localPath);
     await session.page.play();
   }
 
@@ -113,23 +128,25 @@ export class LocalFileAdapter implements StreamingAdapter {
     }
 
     const state = await page.state();
-    const durationSeconds = durationSecondsFor(context.mediaItem, state.duration);
-    const positionSeconds = Math.floor(state.currentTime);
+    const browserDuration = finitePositive(state.duration) ? state.duration : undefined;
+    const durationSeconds = durationSecondsFor(context.mediaItem, browserDuration);
+    const positionSeconds = Math.max(0, Math.floor(finiteNumber(state.currentTime) ?? 0));
+    const details = playerDetails(state, browserDuration !== undefined);
 
     if (state.error) {
       return {
         status: "error",
         errorCode: "local-file-playback-error",
-        details: { ...state }
+        details
       };
     }
 
-    if (state.ended || positionSeconds >= durationSeconds) {
-      return observation("completed", positionSeconds, durationSeconds, state.fullscreen);
+    if (state.ended || (browserDuration !== undefined && positionSeconds >= durationSeconds)) {
+      return observation("completed", positionSeconds, durationSeconds, state.fullscreen, details);
     }
 
     if (state.readyState < 2) {
-      return observation("buffering", positionSeconds, durationSeconds, state.fullscreen);
+      return observation("buffering", positionSeconds, durationSeconds, state.fullscreen, details);
     }
 
     if (
@@ -140,7 +157,7 @@ export class LocalFileAdapter implements StreamingAdapter {
       return {
         status: "error",
         errorCode: "local-file-video-track-unavailable",
-        details: { ...state }
+        details
       };
     }
 
@@ -148,7 +165,8 @@ export class LocalFileAdapter implements StreamingAdapter {
       state.paused ? "paused" : "playing",
       positionSeconds,
       durationSeconds,
-      state.fullscreen
+      state.fullscreen,
+      details
     );
   }
 
@@ -164,6 +182,7 @@ export class LocalFileAdapter implements StreamingAdapter {
     const session = this.session(context);
     await session.page?.close().catch(() => undefined);
     delete session.page;
+    await stat(session.localPath);
     await this.start(context);
     await this.enterFullscreen(context);
     return { recovered: true, message: "Local file browser relaunched." };
@@ -210,7 +229,7 @@ class ChromeLocalPlayerBrowser {
         if (this.page) {
           await this.page.navigate(playerUrl);
           await this.page.bringToFront();
-          await this.page.waitForReady();
+          await assertReady(this.page);
           return this.page;
         }
 
@@ -219,12 +238,12 @@ class ChromeLocalPlayerBrowser {
         this.page = await CdpPlayerPage.connect(target.webSocketDebuggerUrl);
         await this.page.navigate(playerUrl);
         await this.page.bringToFront();
-        await this.page.waitForReady();
+        await assertReady(this.page);
         return this.page;
       } catch (error) {
         this.page = undefined;
 
-        if (attempt > 0 || !isCreateTargetError(error)) {
+        if (attempt > 0 || !isRecoverableOpenError(error)) {
           throw error;
         }
 
@@ -253,8 +272,11 @@ class ChromeLocalPlayerBrowser {
       `--user-data-dir=${userDataDir}`,
       "--allow-file-access-from-files",
       "--autoplay-policy=no-user-gesture-required",
+      "--disable-background-media-suspend",
+      "--disable-features=CalculateNativeWinOcclusion,MediaSessionService",
       "--disable-session-crashed-bubble",
       "--kiosk",
+      "--no-first-run",
       "about:blank"
     ]);
     this.process.once("exit", () => {
@@ -401,7 +423,11 @@ class CdpPlayerPage implements PlayerPage {
     return this.send("Runtime.evaluate", { awaitPromise: true, expression, returnByValue: true });
   }
 
-  private send(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private send(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs = 10_000
+  ): Promise<unknown> {
     if (this.closed) {
       return Promise.reject(browserPageClosedError());
     }
@@ -410,11 +436,23 @@ class CdpPlayerPage implements PlayerPage {
     const message = JSON.stringify({ id, method, params });
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { reject, resolve });
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP command timed out: ${method}`));
+      }, timeoutMs);
+      const settle = (fn: () => void) => {
+        clearTimeout(timeout);
+        fn();
+      };
+      this.pending.set(id, {
+        reject: (error) => settle(() => reject(error)),
+        resolve: (value) => settle(() => resolve(value))
+      });
       try {
         this.socket.send(message);
       } catch {
         this.pending.delete(id);
+        clearTimeout(timeout);
         reject(browserPageClosedError());
       }
     });
@@ -519,6 +557,15 @@ function isCreateTargetError(error: unknown): boolean {
   return error instanceof Error && error.message.includes("Chrome target creation failed");
 }
 
+function isRecoverableOpenError(error: unknown): boolean {
+  return (
+    isCreateTargetError(error) ||
+    (error instanceof Error &&
+      (error.message.includes("browser-page-closed") ||
+        error.message.includes("CDP command timed out")))
+  );
+}
+
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -551,19 +598,38 @@ function playerHtml(): string {
     </style>
   </head>
   <body>
-    <video id="player" autoplay controls playsinline></video>
+    <video id="player" autoplay controls playsinline preload="auto"></video>
     <script>
       const video = document.getElementById("player");
       const params = new URLSearchParams(location.search);
+      const events = {
+        lastError: undefined,
+        lastEvent: "created"
+      };
       document.title = params.get("title") || "CareTV Local Player";
       video.src = params.get("src");
+      video.load();
+      video.addEventListener("error", () => {
+        events.lastError = video.error ? \`media-error-\${video.error.code}\` : "media-error";
+        events.lastEvent = "error";
+      });
+      for (const event of ["abort", "canplay", "ended", "loadedmetadata", "playing", "stalled", "suspend", "waiting"]) {
+        video.addEventListener(event, () => {
+          events.lastEvent = event;
+        });
+      }
+      video.addEventListener("contextmenu", (event) => event.preventDefault());
       window.caretv = {
         enterFullscreen: async () => {
           if (!document.fullscreenElement && video.requestFullscreen) await video.requestFullscreen();
         },
         pause: async () => video.pause(),
-        play: async () => { await video.play(); },
+        play: async () => {
+          events.lastError = undefined;
+          await video.play();
+        },
         restart: async () => {
+          events.lastError = undefined;
           video.currentTime = 0;
           await video.play();
         },
@@ -571,10 +637,13 @@ function playerHtml(): string {
           currentTime: video.currentTime || 0,
           duration: Number.isFinite(video.duration) ? video.duration : undefined,
           ended: video.ended,
-          error: video.error ? String(video.error.code) : undefined,
+          error: events.lastError || (video.error ? \`media-error-\${video.error.code}\` : undefined),
           fullscreen: document.fullscreenElement === video,
+          lastEvent: events.lastEvent,
+          networkState: video.networkState,
           paused: video.paused,
           readyState: video.readyState,
+          src: video.currentSrc || video.src,
           videoHeight: video.videoHeight || 0,
           videoWidth: video.videoWidth || 0
         }),
@@ -617,6 +686,15 @@ function durationSecondsFor(item: MediaItem, browserDuration: number | undefined
   return Math.max(1, Math.floor(duration));
 }
 
+function finiteNumber(input: number | undefined): number | undefined {
+  return typeof input === "number" && Number.isFinite(input) ? input : undefined;
+}
+
+function finitePositive(input: number | undefined): number | undefined {
+  const value = finiteNumber(input);
+  return value && value > 0 ? value : undefined;
+}
+
 function localPathFor(item: MediaItem): string {
   if (!item.localPath) {
     throw new Error(`Local media item ${item.id} has no local path.`);
@@ -633,9 +711,31 @@ function observation(
   status: PlaybackObservation["status"],
   positionSeconds: number,
   durationSeconds: number,
-  fullscreen: boolean
+  fullscreen: boolean,
+  details?: Record<string, unknown>
 ): PlaybackObservation {
-  return { durationSeconds, fullscreen, positionSeconds, status };
+  return { durationSeconds, fullscreen, positionSeconds, status, ...(details ? { details } : {}) };
+}
+
+function playerDetails(state: PlayerState, durationObserved: boolean): Record<string, unknown> {
+  return {
+    currentTime: state.currentTime,
+    duration: state.duration,
+    durationObserved,
+    error: state.error,
+    lastEvent: state.lastEvent,
+    networkState: state.networkState,
+    paused: state.paused,
+    readyState: state.readyState,
+    videoHeight: state.videoHeight,
+    videoWidth: state.videoWidth
+  };
+}
+
+async function assertReady(page: CdpPlayerPage): Promise<void> {
+  if (!(await page.waitForReady())) {
+    throw new Error("Local player page did not initialize.");
+  }
 }
 
 function throwIfAborted(signal: AbortSignal): void {

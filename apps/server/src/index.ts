@@ -1,7 +1,9 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
+import { Transform, type Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import Fastify from "fastify";
 
@@ -46,19 +48,16 @@ const events = new PlaybackEventRepository(db);
 const playlists = new PlaylistRepository(db);
 const settings = new SettingsRepository(db);
 
-const app = Fastify({ bodyLimit: 1024 * 1024 * 1024, logger: true });
+const maxUploadBytes = 50 * 1024 * 1024 * 1024;
+const app = Fastify({ bodyLimit: maxUploadBytes, logger: true });
 const uploadDir = join(config.values.runtimeDir, "uploads");
 const youtubeFallbackSettingKey = "youtubeFallbackPlaylist";
 
 await mkdir(uploadDir, { recursive: true });
 
-app.addContentTypeParser(
-  "application/octet-stream",
-  { parseAs: "buffer" },
-  (_request, body, done) => {
-    done(null, body);
-  }
-);
+app.addContentTypeParser("application/octet-stream", (_request, payload, done) => {
+  done(null, payload);
+});
 
 app.addHook("onRequest", (request, reply, done) => {
   reply.header("Access-Control-Allow-Origin", "*");
@@ -116,7 +115,7 @@ app.post("/api/v1/media", (request, reply) => {
   return item;
 });
 
-app.delete("/api/v1/media/:id", (request, reply) => {
+app.delete("/api/v1/media/:id", async (request, reply) => {
   const item = media.get(routeParam(request.params, "id"));
 
   if (!item) {
@@ -146,6 +145,7 @@ app.delete("/api/v1/media/:id", (request, reply) => {
     });
     media.softDeleteLocalPath(item.localPath, now);
   } else {
+    await cancelPendingUpload(item, now);
     media.softDelete(item.id, now);
   }
 
@@ -153,10 +153,10 @@ app.delete("/api/v1/media/:id", (request, reply) => {
 });
 
 app.post("/api/v1/uploads", async (request, reply) => {
-  const body = Buffer.isBuffer(request.body) ? request.body : undefined;
+  const body = request.body;
   const filename = safeFilename(stringField(parseBody(request.query), "filename", "upload.bin"));
 
-  if (!body?.length) {
+  if (!isReadable(body)) {
     reply.code(400);
     return { error: "upload-body-required" };
   }
@@ -165,8 +165,14 @@ app.post("/api/v1/uploads", async (request, reply) => {
   const downloadId = crypto.randomUUID();
   const mediaItemId = crypto.randomUUID();
   const sourcePath = join(uploadDir, `${downloadId}-${filename}`);
+  const tempPath = `${sourcePath}.part`;
+  const upload = await writeUploadStream(body, tempPath, sourcePath);
 
-  await writeFile(sourcePath, body);
+  if (upload.sizeBytes <= 0) {
+    await removeFileIfExists(sourcePath);
+    reply.code(400);
+    return { error: "upload-body-required" };
+  }
 
   media.create({
     id: mediaItemId,
@@ -175,7 +181,7 @@ app.post("/api/v1/uploads", async (request, reply) => {
     mediaType: "local-file",
     enabled: true,
     repeatable: true,
-    metadata: { upload: { downloadId, filename, status: "pending" } },
+    metadata: { upload: { downloadId, filename, sizeBytes: upload.sizeBytes, status: "pending" } },
     createdAt: now,
     updatedAt: now
   });
@@ -189,7 +195,7 @@ app.post("/api/v1/uploads", async (request, reply) => {
   });
 
   reply.code(201);
-  return { downloadId, mediaItemId };
+  return { downloadId, mediaItemId, sizeBytes: upload.sizeBytes };
 });
 
 app.post("/api/v1/queue", (request, reply) => {
@@ -431,6 +437,7 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
   const canonicalUrl = canonicalYouTubeUrl(url);
   const now = new Date().toISOString();
   const existing = media.getByServiceUrl("youtube", canonicalUrl);
+  const requestedDurationSeconds = optionalNumberField(body, "durationSeconds");
   const item =
     existing ??
     ({
@@ -441,7 +448,7 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
       url: canonicalUrl,
       enabled: true,
       repeatable: true,
-      expectedDurationSeconds: numberField(body, "durationSeconds", 900),
+      ...(requestedDurationSeconds ? { expectedDurationSeconds: requestedDurationSeconds } : {}),
       metadata: { sourceUrl: canonicalUrl },
       createdAt: now,
       updatedAt: now
@@ -634,7 +641,7 @@ app.post("/api/v1/playback/fallback", (request) => {
   const body = parseBody(request.body);
   return setPlaybackSettings({ fallbackEnabled: booleanField(body, "enabled", true) });
 });
-app.post("/api/v1/lab/reset", () => {
+app.post("/api/v1/lab/reset", async () => {
   const status = setPlaybackSettings({ enabled: false, loopEnabled: false });
   db.exec(`
     DELETE FROM playback_events;
@@ -644,6 +651,7 @@ app.post("/api/v1/lab/reset", () => {
     DELETE FROM media_deletions;
     DELETE FROM media_downloads;
   `);
+  await resetUploadDir();
   return { reset: true, ...status };
 });
 
@@ -780,7 +788,7 @@ app.post("/api/v1/appliance/media-deletions/:id/fail", (request, reply) => {
   return { ok: true };
 });
 
-app.get("/api/v1/appliance/downloads/:id/file", (request, reply) => {
+app.get("/api/v1/appliance/downloads/:id/file", async (request, reply) => {
   const download = downloads.get(routeParam(request.params, "id"));
 
   if (!download || download.status !== "pending") {
@@ -788,23 +796,36 @@ app.get("/api/v1/appliance/downloads/:id/file", (request, reply) => {
     return { error: "download-not-found" };
   }
 
+  const source = await stat(download.sourcePath).catch(() => undefined);
+
+  if (!source?.isFile()) {
+    reply.code(410);
+    return { error: "download-source-missing" };
+  }
+
+  reply.header("content-length", String(source.size));
+  reply.header(
+    "content-disposition",
+    `attachment; filename="${headerFilename(download.filename)}"`
+  );
   reply.header("content-type", "application/octet-stream");
   return reply.send(createReadStream(download.sourcePath));
 });
 
-app.post("/api/v1/appliance/downloads/:id/complete", (request, reply) => {
+app.post("/api/v1/appliance/downloads/:id/complete", async (request, reply) => {
   const body = parseBody(request.body);
   const download = downloads.get(routeParam(request.params, "id"));
   const localPath = stringOptional(body.localPath);
   const now = new Date().toISOString();
 
-  if (!download || !localPath) {
+  if (!download || !localPath || !media.get(download.mediaItemId)) {
     reply.code(404);
     return { error: "download-not-found" };
   }
 
   downloads.complete(download.id, now);
   media.updateLocalPath(download.mediaItemId, localPath, now);
+  await removeFileIfExists(download.sourcePath);
   return { ok: true };
 });
 
@@ -913,6 +934,29 @@ app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
   if (!updated) {
     reply.code(409);
     return { error: "queue-entry-status-conflict" };
+  }
+
+  return { ok: true };
+});
+
+app.post("/api/v1/appliance/media/:id/duration", (request, reply) => {
+  const body = parseBody(request.body);
+  const durationSeconds = optionalNumberField(body, "durationSeconds");
+
+  if (!durationSeconds || durationSeconds < 1) {
+    reply.code(400);
+    return { error: "duration-seconds-required" };
+  }
+
+  if (
+    !media.updateExpectedDuration(
+      routeParam(request.params, "id"),
+      durationSeconds,
+      new Date().toISOString()
+    )
+  ) {
+    reply.code(404);
+    return { error: "media-not-found" };
   }
 
   return { ok: true };
@@ -1314,6 +1358,11 @@ function numberField(body: Record<string, unknown>, key: string, fallback: numbe
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function optionalNumberField(body: Record<string, unknown>, key: string): number | undefined {
+  const value = body[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : undefined;
+}
+
 function booleanField(body: Record<string, unknown>, key: string, fallback: boolean): boolean {
   const value = body[key];
   return typeof value === "boolean" ? value : fallback;
@@ -1334,6 +1383,87 @@ function safeFilename(input: string): string {
       .replace(/[^a-zA-Z0-9._ -]/g, "_")
       .trim() || "upload.bin"
   );
+}
+
+function headerFilename(input: string): string {
+  return safeFilename(input).replace(/["\\]/g, "_");
+}
+
+function isReadable(input: unknown): input is Readable {
+  return Boolean(
+    input &&
+    typeof input === "object" &&
+    "pipe" in input &&
+    typeof (input as { pipe?: unknown }).pipe === "function"
+  );
+}
+
+async function writeUploadStream(
+  source: Readable,
+  tempPath: string,
+  destinationPath: string
+): Promise<{ sizeBytes: number }> {
+  let sizeBytes = 0;
+  const counter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      sizeBytes += chunk.byteLength;
+
+      if (sizeBytes > maxUploadBytes) {
+        callback(new Error("Upload exceeded maximum supported size."));
+        return;
+      }
+
+      callback(null, chunk);
+    }
+  });
+
+  try {
+    await pipeline(source, counter, createWriteStream(tempPath, { flags: "wx" }));
+    await rename(tempPath, destinationPath);
+    return { sizeBytes };
+  } catch (error) {
+    await removeFileIfExists(tempPath);
+    throw error;
+  }
+}
+
+async function removeFileIfExists(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      app.log.warn(
+        { error: error instanceof Error ? error.message : "Unknown error", path },
+        "File cleanup failed"
+      );
+    }
+  }
+}
+
+async function cancelPendingUpload(item: MediaItem, now: string): Promise<void> {
+  const downloadId = uploadDownloadId(item);
+  const download = downloadId ? downloads.get(downloadId) : undefined;
+
+  if (!download || download.status !== "pending") {
+    return;
+  }
+
+  downloads.fail(download.id, "Media was deleted before appliance download.", now);
+  await removeFileIfExists(download.sourcePath);
+}
+
+function uploadDownloadId(item: MediaItem): string | undefined {
+  const upload = item.metadata.upload;
+  if (!upload || typeof upload !== "object" || Array.isArray(upload)) {
+    return undefined;
+  }
+
+  return stringOptional((upload as Record<string, unknown>).downloadId);
+}
+
+async function resetUploadDir(): Promise<void> {
+  await rm(uploadDir, { force: true, recursive: true });
+  await mkdir(uploadDir, { recursive: true });
 }
 
 function titleFromFilename(input: string): string {
@@ -1502,4 +1632,8 @@ function canonicalYouTubeUrl(input: string): string {
   }
 
   return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
