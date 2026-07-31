@@ -29,6 +29,7 @@ let state: PlaybackState = createIdleState();
 let nextHeartbeatAt = 0;
 let nextMediaScanAt = 0;
 let backgroundHeartbeatInFlight = false;
+let playbackInProgress = false;
 const fullscreenCheckMs = 10_000;
 let playbackSettings: PlaybackSettings = {
   enabled: false,
@@ -41,6 +42,13 @@ interface PlaybackSettings {
   fallbackEnabled: boolean;
   loopEnabled: boolean;
 }
+
+interface PendingQueueReport {
+  fields: Record<string, unknown>;
+  status: QueueEntry["status"];
+}
+
+const pendingQueueReports = new Map<string, PendingQueueReport>();
 
 async function main(): Promise<void> {
   console.log(
@@ -68,6 +76,8 @@ async function main(): Promise<void> {
         await sleep(config.values.appliancePollMs);
         continue;
       }
+
+      await flushPendingQueueReports();
 
       if (!playback.enabled) {
         await sleep(config.values.appliancePollMs);
@@ -202,7 +212,7 @@ async function processDownloads(): Promise<void> {
 }
 
 async function backgroundHeartbeat(): Promise<void> {
-  if (backgroundHeartbeatInFlight) {
+  if (backgroundHeartbeatInFlight || playbackInProgress) {
     return;
   }
 
@@ -240,6 +250,7 @@ async function pollPlaybackSettings(): Promise<PlaybackSettings | undefined> {
 }
 
 async function play(queueEntry: QueueEntry): Promise<void> {
+  playbackInProgress = true;
   const mediaItem = await client.getMedia(queueEntry.mediaItemId);
 
   const adapter = adapters.find((candidate) => candidate.supports(mediaItem));
@@ -280,8 +291,22 @@ async function play(queueEntry: QueueEntry): Promise<void> {
       error instanceof Error ? error.message : "Unknown appliance error"
     );
   } finally {
-    await adapter.cleanup(context);
-    await heartbeat(true);
+    try {
+      await adapter.cleanup(context);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Adapter cleanup failed.",
+          adapterId: adapter.id,
+          mediaItemId: mediaItem.id,
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
+    } finally {
+      playbackInProgress = false;
+      await heartbeat(true);
+    }
   }
 }
 
@@ -332,6 +357,8 @@ async function monitor(
   context: AdapterContext
 ): Promise<"completed" | "failed" | "skipped"> {
   const startedAt = Date.now();
+  let lastProgressAt = startedAt;
+  let lastPositionSeconds = 0;
   let maxRuntimeMs = maxRuntimeMsFor(mediaItem);
   let bufferingSince: number | undefined;
   let nextFullscreenCheckAt = 0;
@@ -339,7 +366,7 @@ async function monitor(
   for (;;) {
     const now = Date.now();
 
-    if (now - startedAt > maxRuntimeMs) {
+    if (now - startedAt > maxRuntimeMs && now - lastProgressAt > staleProgressLimitMs()) {
       await fail(queueEntry.id, "observation-limit", `Playback did not finish: ${mediaItem.title}`);
       return "failed";
     }
@@ -357,6 +384,10 @@ async function monitor(
     }
 
     maxRuntimeMs = Math.max(maxRuntimeMs, maxRuntimeMsForObservation(observation));
+    if (isPlaybackProgress(observation, lastPositionSeconds)) {
+      lastPositionSeconds = observation.positionSeconds!;
+      lastProgressAt = now;
+    }
     await syncObservedDuration(mediaItem, observation);
     nextFullscreenCheckAt = await maintainFullscreen(
       streamingAdapter,
@@ -442,13 +473,13 @@ async function applyCommands(
       case "pause":
         await streamingAdapter.pause(context);
         await apply({ type: "PAUSED" });
-        await client.updateQueueStatus(queueEntryId, "paused");
+        await reportQueueStatus(queueEntryId, "paused");
         await client.updateCommand(command.id, "accepted");
         break;
       case "resume":
         await streamingAdapter.resume(context);
         await apply({ type: "RESUMED" });
-        await client.updateQueueStatus(queueEntryId, "playing");
+        await reportQueueStatus(queueEntryId, "playing");
         await client.updateCommand(command.id, "accepted");
         break;
       case "restart":
@@ -457,14 +488,14 @@ async function applyCommands(
           await apply({ type: "RESUMED" });
         }
         await apply({ type: "PLAYING", positionSeconds: 0 });
-        await client.updateQueueStatus(queueEntryId, "playing");
+        await reportQueueStatus(queueEntryId, "playing");
         await client.updateCommand(command.id, "accepted");
         break;
       case "skip":
       case "stop":
         await streamingAdapter.stop(context);
         await apply({ type: "STOPPED" });
-        await client.updateQueueStatus(queueEntryId, "skipped", {
+        await reportQueueStatus(queueEntryId, "skipped", {
           completedAt: new Date().toISOString()
         });
         await client.updateCommand(command.id, "completed");
@@ -487,7 +518,7 @@ async function applyObservation(
       await apply(positionEvent("HEARTBEAT", observation.positionSeconds));
       return undefined;
     case "playing":
-      await client.updateQueueStatus(queueEntryId, "playing");
+      await reportQueueStatus(queueEntryId, "playing");
       await apply({
         type: "PLAYING",
         ...(observation.positionSeconds !== undefined
@@ -506,7 +537,7 @@ async function applyObservation(
         return undefined;
       }
 
-      await client.updateQueueStatus(queueEntryId, "paused");
+      await reportQueueStatus(queueEntryId, "paused");
       await apply(positionEvent("PAUSED", observation.positionSeconds));
       return undefined;
     case "buffering":
@@ -542,7 +573,7 @@ async function applyObservation(
       );
       return "failed";
     case "completed":
-      await client.updateQueueStatus(queueEntryId, "completed", {
+      await reportQueueStatus(queueEntryId, "completed", {
         completedAt: new Date().toISOString()
       });
       await apply(positionEvent("COMPLETED", observation.positionSeconds));
@@ -550,14 +581,56 @@ async function applyObservation(
   }
 }
 
+async function reportQueueStatus(
+  queueEntryId: string,
+  status: QueueEntry["status"],
+  fields: Record<string, unknown> = {}
+): Promise<boolean> {
+  return client
+    .updateQueueStatus(queueEntryId, status, fields)
+    .then(() => true)
+    .catch((error) => {
+      pendingQueueReports.set(queueEntryId, { fields, status });
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Queue status update failed.",
+          queueEntryId,
+          status,
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
+      return false;
+    });
+}
+
+async function flushPendingQueueReports(): Promise<void> {
+  for (const [queueEntryId, report] of pendingQueueReports) {
+    try {
+      await client.updateQueueStatus(queueEntryId, report.status, report.fields);
+      pendingQueueReports.delete(queueEntryId);
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Pending queue status update failed.",
+          queueEntryId,
+          status: report.status,
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
+      return;
+    }
+  }
+}
 async function fail(queueEntryId: string, code: string, message: string): Promise<void> {
-  await client.updateQueueStatus(queueEntryId, "failed", {
+  const updated = await reportQueueStatus(queueEntryId, "failed", {
     completedAt: new Date().toISOString(),
     lastErrorCode: code,
     lastErrorMessage: message
   });
 
-  if (state.phase !== "idle") {
+  if (updated !== false && state.phase !== "idle") {
     await apply({ type: "FAILED", code, message });
   }
 }
@@ -663,6 +736,22 @@ function maxRuntimeMsForObservation(observation: PlaybackObservation): number {
   }
 
   return Math.max(60 * 60 * 1000, durationSeconds * 1000 + 30 * 60 * 1000);
+}
+
+function isPlaybackProgress(
+  observation: PlaybackObservation,
+  lastPositionSeconds: number
+): boolean {
+  return (
+    observation.status === "playing" &&
+    typeof observation.positionSeconds === "number" &&
+    Number.isFinite(observation.positionSeconds) &&
+    observation.positionSeconds > lastPositionSeconds + 5
+  );
+}
+
+function staleProgressLimitMs(): number {
+  return Math.max(10 * 60 * 1000, config.values.applianceBufferingTimeoutMs * 2);
 }
 
 async function maintainFullscreen(
