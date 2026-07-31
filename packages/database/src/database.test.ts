@@ -125,6 +125,31 @@ describe("database repositories", () => {
     });
   });
 
+  it("only reconciles active queue state older than the threshold", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("entry-1", "media-1", 1),
+        startedAt: now,
+        status: "playing"
+      });
+
+      expect(
+        queue.reconcileStaleActive("skipped", "appliance-idle", "2025-12-31T23:59:59.000Z")
+      ).toBe(0);
+      expect(queue.get("entry-1")).toMatchObject({ status: "playing" });
+      expect(
+        queue.reconcileStaleActive("skipped", "appliance-idle", "2026-01-01T00:00:01.000Z")
+      ).toBe(1);
+      expect(queue.get("entry-1")).toMatchObject({
+        status: "skipped",
+        lastErrorCode: "appliance-idle"
+      });
+    });
+  });
   it("rejects competing active playback updates", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

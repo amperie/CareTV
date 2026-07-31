@@ -1244,9 +1244,13 @@ function reconcileQueueWithApplianceState(state: PlaybackState | undefined): voi
     return;
   }
 
+  const idleStaleMs = Math.max(config.values.applianceHeartbeatMs * 12, 10 * 60_000);
+  const startedBefore =
+    state.phase === "idle" ? new Date(Date.now() - idleStaleMs).toISOString() : undefined;
   const reconciled = queue.reconcileStaleActive(
     state.phase === "failed" ? "failed" : "skipped",
-    state.phase === "failed" ? "appliance-failed" : "appliance-idle"
+    state.phase === "failed" ? "appliance-failed" : "appliance-idle",
+    startedBefore
   );
 
   if (reconciled > 0) {

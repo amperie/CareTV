@@ -454,18 +454,32 @@ async function applyCommands(
   streamingAdapter: StreamingAdapter,
   context: AdapterContext
 ): Promise<"skipped" | undefined> {
-  for (const command of await client.pendingCommands()) {
+  let commands: PlaybackCommand[];
+  try {
+    commands = await client.pendingCommands();
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Command polling failed; continuing playback.",
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+    return undefined;
+  }
+
+  for (const command of commands) {
     if (command.type === "login-youtube" || command.type === "login-prime") {
       continue;
     }
 
     if (command.mediaItemId && command.mediaItemId !== context.mediaItem.id) {
-      await client.updateCommand(command.id, "failed");
+      await reportCommandStatus(command.id, "failed");
       continue;
     }
 
     if (!canApplyCommand(command, state.phase)) {
-      await client.updateCommand(command.id, "failed");
+      await reportCommandStatus(command.id, "failed");
       continue;
     }
 
@@ -474,13 +488,13 @@ async function applyCommands(
         await streamingAdapter.pause(context);
         await apply({ type: "PAUSED" });
         await reportQueueStatus(queueEntryId, "paused");
-        await client.updateCommand(command.id, "accepted");
+        await reportCommandStatus(command.id, "accepted");
         break;
       case "resume":
         await streamingAdapter.resume(context);
         await apply({ type: "RESUMED" });
         await reportQueueStatus(queueEntryId, "playing");
-        await client.updateCommand(command.id, "accepted");
+        await reportCommandStatus(command.id, "accepted");
         break;
       case "restart":
         await streamingAdapter.restart(context);
@@ -489,7 +503,7 @@ async function applyCommands(
         }
         await apply({ type: "PLAYING", positionSeconds: 0 });
         await reportQueueStatus(queueEntryId, "playing");
-        await client.updateCommand(command.id, "accepted");
+        await reportCommandStatus(command.id, "accepted");
         break;
       case "skip":
       case "stop":
@@ -498,7 +512,7 @@ async function applyCommands(
         await reportQueueStatus(queueEntryId, "skipped", {
           completedAt: new Date().toISOString()
         });
-        await client.updateCommand(command.id, "completed");
+        await reportCommandStatus(command.id, "completed");
         return "skipped";
     }
   }
@@ -623,6 +637,25 @@ async function flushPendingQueueReports(): Promise<void> {
     }
   }
 }
+async function reportCommandStatus(
+  commandId: string,
+  status: PlaybackCommand["status"]
+): Promise<void> {
+  try {
+    await client.updateCommand(commandId, status);
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Command status update failed.",
+        commandId,
+        status,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+  }
+}
+
 async function fail(queueEntryId: string, code: string, message: string): Promise<void> {
   const updated = await reportQueueStatus(queueEntryId, "failed", {
     completedAt: new Date().toISOString(),

@@ -297,16 +297,21 @@ export class QueueRepository {
     return Number(result.changes) > 0;
   }
 
-  public reconcileStaleActive(status: QueueEntryStatus, errorCode: string): number {
+  public reconcileStaleActive(
+    status: QueueEntryStatus,
+    errorCode: string,
+    startedBefore?: string
+  ): number {
     const result = this.db
       .prepare(
         `
           UPDATE queue_entries
           SET status = ?, last_error_code = ?
           WHERE status IN ('starting', 'playing', 'paused')
+            AND (? IS NULL OR started_at IS NULL OR started_at < ?)
         `
       )
-      .run(status, errorCode);
+      .run(status, errorCode, startedBefore ?? null, startedBefore ?? null);
 
     return Number(result.changes);
   }
