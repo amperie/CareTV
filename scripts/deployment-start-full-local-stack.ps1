@@ -7,8 +7,18 @@ $env:CARETV_HOST = if ($env:CARETV_HOST) { $env:CARETV_HOST } else { "0.0.0.0" }
 $env:CARETV_SERVER_PORT = if ($env:CARETV_SERVER_PORT) { $env:CARETV_SERVER_PORT } else { "4010" }
 $env:CARETV_WEB_PORT = if ($env:CARETV_WEB_PORT) { $env:CARETV_WEB_PORT } else { "4020" }
 
+if (Get-Command pnpm.cmd -ErrorAction SilentlyContinue) {
+  pnpm.cmd dev
+  exit $LASTEXITCODE
+}
+
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
   pnpm dev
+  exit $LASTEXITCODE
+}
+
+if (Get-Command corepack.cmd -ErrorAction SilentlyContinue) {
+  corepack.cmd pnpm dev
   exit $LASTEXITCODE
 }
 

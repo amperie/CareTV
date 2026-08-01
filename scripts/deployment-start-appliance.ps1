@@ -11,8 +11,18 @@ if (Test-Path $configPath) {
   $env:CARETV_SERVER_URL = "http://w11.lan:4010"
 }
 
+if (Get-Command pnpm.cmd -ErrorAction SilentlyContinue) {
+  pnpm.cmd dev:appliance
+  exit $LASTEXITCODE
+}
+
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
   pnpm dev:appliance
+  exit $LASTEXITCODE
+}
+
+if (Get-Command corepack.cmd -ErrorAction SilentlyContinue) {
+  corepack.cmd pnpm dev:appliance
   exit $LASTEXITCODE
 }
 

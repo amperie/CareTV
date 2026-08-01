@@ -6,12 +6,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 $scriptPath = Resolve-Path $StartScript
+$wrapperPath = Resolve-Path (Join-Path $PSScriptRoot "deployment-run-task-logged.ps1")
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $userId = "$env:USERDOMAIN\$env:USERNAME"
 
 $action = New-ScheduledTaskAction `
   -Execute "powershell.exe" `
-  -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`"" `
+  -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`" -TaskName `"$TaskName`" -StartScript `"$scriptPath`"" `
   -WorkingDirectory $repoRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
@@ -38,3 +39,4 @@ Register-ScheduledTask `
 
 Write-Host "Installed scheduled task '$TaskName' for $userId."
 Write-Host "Startup script: $scriptPath"
+Write-Host "Task logs: $(Join-Path $repoRoot ".caretv\task-logs")"
