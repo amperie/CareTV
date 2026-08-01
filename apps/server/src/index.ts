@@ -861,6 +861,12 @@ app.get("/api/v1/appliance/media/:id", (request, reply) => {
 
 app.post("/api/v1/appliance/queue/next", () => {
   const now = new Date().toISOString();
+  const active = queue.active();
+
+  if (active) {
+    return active;
+  }
+
   const next = queue.selectNextQueued(now);
 
   if (next || !playbackSettings().loopEnabled || queue.runnableCount() > 0) {
