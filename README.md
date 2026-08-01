@@ -173,6 +173,7 @@ After manual startup works, install the logon scheduled task:
 
 Useful deployment scripts:
 
+- `scripts\deployment-setup-autostart.ps1`: write config, install reboot/logon autostart, optionally install dependencies, start now, enable playback, and configure Sysinternals Autologon
 - `scripts\deployment-start-full-local-stack.ps1`: server, dashboard, and appliance on one machine
 - `scripts\deployment-restart-full-local-stack.ps1`: clean stale runtime state, then start full stack
 - `scripts\deployment-start-appliance.ps1`: appliance only
@@ -181,6 +182,38 @@ Useful deployment scripts:
 - `scripts\deployment-uninstall-appliance-logon-task.ps1`: remove scheduled task
 - `scripts\deployment-test-appliance-logon-task.ps1`: trigger the scheduled task manually
 - `scripts\deployment-clean-stale-runtime.ps1`: clean stale local runtime state
+
+### Reboot autostart
+
+To make the appliance come back after reboot:
+
+```powershell
+.\scripts\deployment-setup-autostart.ps1 `
+  -Mode Appliance `
+  -ServerUrl "http://w11.lan:4010" `
+  -ApplianceId "living-room-tv" `
+  -ApplianceName "Living Room TV" `
+  -StartNow
+```
+
+For a single machine running server, dashboard, and appliance:
+
+```powershell
+.\scripts\deployment-setup-autostart.ps1 -Mode FullStack -StartNow
+```
+
+To also configure Windows auto-login, download Sysinternals Autologon and pass its executable:
+
+```powershell
+.\scripts\deployment-setup-autostart.ps1 `
+  -Mode Appliance `
+  -ServerUrl "http://w11.lan:4010" `
+  -AutologonExe "C:\Tools\Autologon64.exe" `
+  -AutologonPassword (Read-Host -AsSecureString "CareTV Windows password")
+```
+
+Playback only starts automatically if the server has playback enabled and runnable queue items. The
+setup script can ask the server to enable playback immediately with `-EnablePlaybackNow`.
 
 ## Runtime Model
 
