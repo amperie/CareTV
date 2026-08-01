@@ -285,6 +285,14 @@ async function play(queueEntry: QueueEntry): Promise<void> {
 
     await monitor(queueEntry, mediaItem, adapter, context);
   } catch (error) {
+    if (
+      isBrowserPageClosedError(error) &&
+      (await recoverClosedPage(queueEntry.id, adapter, context))
+    ) {
+      await monitor(queueEntry, mediaItem, adapter, context);
+      return;
+    }
+
     await fail(
       queueEntry.id,
       "agent-error",
@@ -323,17 +331,7 @@ async function startWithRecovery(
       throw error;
     }
 
-    const attempt = state.recoveryAttempt + 1;
-    await apply({ type: "RECOVERING", attempt });
-    const recovery = await streamingAdapter.recover(context, attempt);
-
-    if (!recovery.recovered) {
-      await fail(queueEntryId, "browser-recovery-failed", recovery.message);
-      return false;
-    }
-
-    await apply({ type: "PLAYING", positionSeconds: 0 });
-    return true;
+    return recoverClosedPage(queueEntryId, streamingAdapter, context);
   }
 }
 
@@ -435,17 +433,41 @@ async function observeWithRecovery(
       throw error;
     }
 
-    const attempt = state.recoveryAttempt + 1;
+    return (await recoverClosedPage(queueEntryId, streamingAdapter, context))
+      ? { status: "ready", positionSeconds: state.positionSeconds ?? 0 }
+      : undefined;
+  }
+}
+
+async function recoverClosedPage(
+  queueEntryId: string,
+  streamingAdapter: StreamingAdapter,
+  context: AdapterContext
+): Promise<boolean> {
+  const attempt = state.recoveryAttempt + 1;
+
+  if (state.phase === "launching-browser") {
+    await apply({ type: "BROWSER_LAUNCHED" });
+  }
+
+  try {
     await apply({ type: "RECOVERING", attempt });
     const recovery = await streamingAdapter.recover(context, attempt);
 
     if (!recovery.recovered) {
       await fail(queueEntryId, "browser-recovery-failed", recovery.message);
-      return undefined;
+      return false;
     }
 
-    await apply({ type: "PLAYING", positionSeconds: 0 });
-    return { status: "ready", positionSeconds: 0 };
+    await apply({ type: "PLAYING", positionSeconds: state.positionSeconds ?? 0 });
+    return true;
+  } catch (error) {
+    await fail(
+      queueEntryId,
+      "browser-recovery-failed",
+      error instanceof Error ? error.message : "Browser recovery failed."
+    );
+    return false;
   }
 }
 
