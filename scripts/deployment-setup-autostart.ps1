@@ -1,6 +1,8 @@
 param(
   [ValidateSet("Appliance", "FullStack")]
   [string]$Mode = "Appliance",
+  [ValidateSet("StartupFolder", "ScheduledTask")]
+  [string]$StartupMethod = "StartupFolder",
   [string]$ServerUrl = "http://w11.lan:4010",
   [string]$ApplianceId = "living-room-tv",
   [string]$ApplianceName = "Living Room TV",
@@ -74,9 +76,15 @@ $startScript = if ($Mode -eq "FullStack") {
   Join-Path $PSScriptRoot "deployment-start-appliance.ps1"
 }
 
-& (Join-Path $PSScriptRoot "deployment-install-appliance-logon-task.ps1") `
-  -TaskName $taskName `
-  -StartScript $startScript
+if ($StartupMethod -eq "ScheduledTask") {
+  & (Join-Path $PSScriptRoot "deployment-install-appliance-logon-task.ps1") `
+    -TaskName $taskName `
+    -StartScript $startScript
+} else {
+  & (Join-Path $PSScriptRoot "deployment-install-startup-folder-launcher.ps1") `
+    -Name $taskName `
+    -StartScript $startScript
+}
 
 if ($AutologonExe -or $AutologonPassword) {
   if (-not $AutologonExe) {
@@ -103,14 +111,19 @@ if ($EnablePlaybackNow) {
 }
 
 if ($StartNow) {
-  Start-ScheduledTask -TaskName $taskName
-  Start-Sleep -Seconds 2
-  Get-ScheduledTaskInfo -TaskName $taskName
+  if ($StartupMethod -eq "ScheduledTask") {
+    Start-ScheduledTask -TaskName $taskName
+    Start-Sleep -Seconds 2
+    Get-ScheduledTaskInfo -TaskName $taskName
+  } else {
+    & (Join-Path ([Environment]::GetFolderPath("Startup")) "$taskName.cmd")
+  }
 }
 
 Write-Host ""
 Write-Host "Autostart setup complete."
 Write-Host "Mode: $Mode"
-Write-Host "Task: $taskName"
+Write-Host "Startup method: $StartupMethod"
+Write-Host "Name: $taskName"
 Write-Host "Startup script: $startScript"
 Write-Host "Dashboard: http://127.0.0.1:4020"

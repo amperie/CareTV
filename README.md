@@ -118,8 +118,9 @@ Start from:
 
 ```powershell
 Copy-Item caretv.config.example.json caretv.config.json
-notepad caretv.config.json
 ```
+
+Then edit `caretv.config.json` if the defaults are not right for the appliance.
 
 Typical appliance config:
 
@@ -161,24 +162,18 @@ git clone <repo-url> C:\CareTV\app
 cd C:\CareTV\app
 pnpm install
 Copy-Item caretv.config.example.json caretv.config.json
-notepad caretv.config.json
 .\scripts\deployment-start-appliance.ps1
-```
-
-After manual startup works, install the logon scheduled task:
-
-```powershell
-.\scripts\deployment-install-appliance-logon-task.ps1
 ```
 
 Useful deployment scripts:
 
 - `scripts\deployment-setup-autostart.ps1`: write config, install reboot/logon autostart, optionally install dependencies, start now, enable playback, and configure Sysinternals Autologon
+- `scripts\deployment-install-startup-folder-launcher.ps1`: install a current-user Startup folder launcher; this is the default autostart method and does not require admin
 - `scripts\deployment-start-full-local-stack.ps1`: server, dashboard, and appliance on one machine
 - `scripts\deployment-restart-full-local-stack.ps1`: clean stale runtime state, then start full stack
 - `scripts\deployment-start-appliance.ps1`: appliance only
 - `scripts\deployment-restart-appliance.ps1`: restart appliance only
-- `scripts\deployment-install-appliance-logon-task.ps1`: install user logon scheduled task
+- `scripts\deployment-install-appliance-logon-task.ps1`: install user logon scheduled task; requires suitable Task Scheduler permissions, usually elevated PowerShell
 - `scripts\deployment-uninstall-appliance-logon-task.ps1`: remove scheduled task
 - `scripts\deployment-test-appliance-logon-task.ps1`: trigger the scheduled task manually
 - `scripts\deployment-clean-stale-runtime.ps1`: clean stale local runtime state
@@ -190,6 +185,7 @@ To make the appliance come back after reboot:
 ```powershell
 .\scripts\deployment-setup-autostart.ps1 `
   -Mode Appliance `
+  -StartupMethod StartupFolder `
   -ServerUrl "http://w11.lan:4010" `
   -ApplianceId "living-room-tv" `
   -ApplianceName "Living Room TV" `
@@ -201,6 +197,9 @@ For a single machine running server, dashboard, and appliance:
 ```powershell
 .\scripts\deployment-setup-autostart.ps1 -Mode FullStack -StartNow
 ```
+
+Use `-StartupMethod ScheduledTask` only when running from elevated PowerShell or when Task Scheduler
+permissions are already known to work for the current user.
 
 To also configure Windows auto-login, download Sysinternals Autologon and pass its executable:
 
