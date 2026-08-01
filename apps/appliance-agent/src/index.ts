@@ -285,11 +285,10 @@ async function play(queueEntry: QueueEntry): Promise<void> {
 
     await monitor(queueEntry, mediaItem, adapter, context);
   } catch (error) {
-    if (
-      isBrowserPageClosedError(error) &&
-      (await recoverClosedPage(queueEntry.id, adapter, context))
-    ) {
-      await monitor(queueEntry, mediaItem, adapter, context);
+    if (isBrowserPageClosedError(error)) {
+      if (await recoverClosedPage(queueEntry.id, adapter, context)) {
+        await monitor(queueEntry, mediaItem, adapter, context);
+      }
       return;
     }
 
