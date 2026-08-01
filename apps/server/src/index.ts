@@ -76,7 +76,7 @@ app.get("/health", () => createHealthStatus("server"));
 app.get("/api/v1/media", () => media.list());
 app.get("/api/v1/downloads", () => downloads.listPending());
 app.get("/api/v1/playlists", () => playlists.list());
-app.get("/api/v1/queue", () => queue.list());
+app.get("/api/v1/queue", () => queue.listPlaybackOrder());
 app.get("/api/v1/appliances", () => appliances.list(new Date()));
 app.get("/api/v1/playback/status", () => {
   const appliance = appliances.latest(new Date());
@@ -86,7 +86,7 @@ app.get("/api/v1/playback/status", () => {
     events: events.listRecent(25),
     fallbackEnabled: playback.fallbackEnabled,
     loopEnabled: playback.loopEnabled,
-    queue: queue.list(),
+    queue: queue.listPlaybackOrder(),
     remoteSupportUrl: config.values.remoteSupportUrl,
     running: playback.enabled,
     ...(appliance?.playbackState ? { state: appliance.playbackState } : {})
@@ -590,14 +590,21 @@ app.post("/api/v1/appliance/fallback/youtube", (request, reply) => {
     return { entries: [], skipped: "fallback-playlist-empty" };
   }
 
+  const queueEntries = queue.list();
   const existingFallbackMediaIds = new Set(fallbackMediaIds);
-  const fallbackAlreadyRunnable = queue
-    .list()
-    .some(
-      (entry) =>
-        existingFallbackMediaIds.has(entry.mediaItemId) &&
-        ["queued", "starting", "playing", "paused"].includes(entry.status)
-    );
+  const primaryAlreadyRunnable = queueEntries.some(
+    (entry) =>
+      isRunnableQueueStatus(entry.status) && !existingFallbackMediaIds.has(entry.mediaItemId)
+  );
+
+  if (primaryAlreadyRunnable) {
+    return { entries: [], skipped: "primary-queue-runnable" };
+  }
+
+  const fallbackAlreadyRunnable = queueEntries.some(
+    (entry) =>
+      existingFallbackMediaIds.has(entry.mediaItemId) && isRunnableQueueStatus(entry.status)
+  );
 
   if (fallbackAlreadyRunnable) {
     return { entries: [], skipped: "fallback-already-runnable" };
@@ -607,6 +614,21 @@ app.post("/api/v1/appliance/fallback/youtube", (request, reply) => {
 
   for (const mediaItemId of fallbackMediaIds) {
     if (!media.get(mediaItemId)) continue;
+
+    const terminal = queueEntries.find(
+      (entry) =>
+        entry.mediaItemId === mediaItemId &&
+        (entry.status === "completed" || entry.status === "failed" || entry.status === "skipped")
+    );
+
+    if (terminal) {
+      if (queue.requeueCompleted(terminal.id)) {
+        const requeued = queue.get(terminal.id);
+        if (requeued) entries.push(requeued);
+      }
+      continue;
+    }
+
     const entry = createQueueEntry(mediaItemId);
     queue.enqueue(entry);
     entries.push(entry);
@@ -1246,6 +1268,12 @@ function setPlaybackSettings(patch: Partial<PlaybackSettings>): PlaybackSettings
   const next = { ...playbackSettings(), ...patch };
   settings.set("playback", next, new Date().toISOString());
   return next;
+}
+
+function isRunnableQueueStatus(status: QueueEntryStatus): boolean {
+  return (
+    status === "queued" || status === "starting" || status === "playing" || status === "paused"
+  );
 }
 
 function reconcileQueueWithApplianceState(state: PlaybackState | undefined): void {

@@ -339,6 +339,14 @@ export class QueueRepository {
     return rows.map(mapQueueRow);
   }
 
+  public listPlaybackOrder(): QueueEntry[] {
+    const rows = this.db
+      .prepare("SELECT * FROM queue_entries ORDER BY priority DESC, position ASC, started_at ASC")
+      .all() as unknown as QueueRow[];
+
+    return rows.map(mapQueueRow);
+  }
+
   public nextPosition(): number {
     const row = this.db
       .prepare("SELECT COALESCE(MAX(position), 0) + 1 AS position FROM queue_entries")

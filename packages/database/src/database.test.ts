@@ -178,6 +178,25 @@ describe("database repositories", () => {
     });
   });
 
+  it("can list entries in playback selection order", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({ ...fakeQueueEntry("first", "media-1", 1), priority: 0 });
+      queue.enqueue({ ...fakeQueueEntry("promoted", "media-1", 2), priority: 2 });
+      queue.enqueue({ ...fakeQueueEntry("middle", "media-1", 3), priority: 1 });
+
+      expect(queue.list().map((entry) => entry.id)).toEqual(["first", "promoted", "middle"]);
+      expect(queue.listPlaybackOrder().map((entry) => entry.id)).toEqual([
+        "promoted",
+        "middle",
+        "first"
+      ]);
+    });
+  });
+
   it("does not overwrite terminal queue status", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);
