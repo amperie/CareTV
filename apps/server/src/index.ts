@@ -311,6 +311,9 @@ app.post("/api/v1/playlists/:id/queue", (request, reply) => {
 app.post("/api/v1/queue/clear-completed", () => {
   return { cleared: queue.clearCompleted() };
 });
+app.post("/api/v1/queue/clear-failed", () => {
+  return { cleared: queue.clearFailed() };
+});
 
 app.delete("/api/v1/queue/:id", (request, reply) => {
   const id = routeParam(request.params, "id");

@@ -228,6 +228,14 @@ export class QueueRepository {
     return ids.reduce((count, row) => count + this.deleteTerminal(row.id), 0);
   }
 
+  public clearFailed(): number {
+    const ids = this.db
+      .prepare("SELECT id FROM queue_entries WHERE status = 'failed'")
+      .all() as { id: string }[];
+
+    return ids.reduce((count, row) => count + this.deleteTerminal(row.id), 0);
+  }
+
   public move(id: string, direction: "up" | "down"): boolean {
     const current = this.get(id);
 

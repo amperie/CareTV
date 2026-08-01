@@ -561,6 +561,17 @@ function App() {
     await refresh();
   }
 
+  async function clearFailed() {
+    setQueueMessage("");
+    try {
+      await post("/queue/clear-failed", {});
+      setQueueMessage("Failed queue items were cleared.");
+    } catch {
+      setQueueMessage("Failed items could not be cleared.");
+    }
+    await refresh();
+  }
+
   return (
     <MantineProvider defaultColorScheme="dark" theme={theme}>
       <AppShell header={{ height: 74 }} padding="md">
@@ -652,6 +663,7 @@ function App() {
                     queuedIds={queuedIds}
                     status={status}
                     onClearCompleted={() => void clearCompleted()}
+                    onClearFailed={() => void clearFailed()}
                     onMove={(id, direction) => void moveQueueEntry(id, direction)}
                     onPlay={(id) => void playQueueEntry(id)}
                     onRemove={(id) => void removeQueueEntry(id)}
@@ -717,6 +729,7 @@ function App() {
                     queuedIds={queuedIds}
                     status={status}
                     onClearCompleted={() => void clearCompleted()}
+                    onClearFailed={() => void clearFailed()}
                     onMove={(id, direction) => void moveQueueEntry(id, direction)}
                     onPlay={(id) => void playQueueEntry(id)}
                     onRemove={(id) => void removeQueueEntry(id)}
@@ -852,6 +865,7 @@ function QueuePanel(props: {
   queuedIds: string[];
   status: PlaybackStatus | undefined;
   onClearCompleted: () => void;
+  onClearFailed: () => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onPlay: (id: string) => void;
   onRemove: (id: string) => void;
@@ -860,6 +874,7 @@ function QueuePanel(props: {
   const visibleQueue =
     props.status?.queue.filter((entry) => isVisibleQueueEntry(entry, props.mediaById)) ?? [];
   const durationSummary = queueDurationSummary(visibleQueue, props.mediaById, props.status?.state);
+  const failedCount = visibleQueue.filter((entry) => entry.status === "failed").length;
 
   return (
     <Card withBorder radius="md" shadow="xs">
@@ -870,6 +885,15 @@ function QueuePanel(props: {
             {visibleQueue.length ? <Badge variant="light">{visibleQueue.length}</Badge> : null}
           </Group>
           <Group gap="xs">
+            <Button
+              color="red"
+              disabled={failedCount === 0}
+              size="xs"
+              variant="light"
+              onClick={() => props.onClearFailed()}
+            >
+              Clear errors
+            </Button>
             <Button size="xs" variant="light" onClick={() => props.onClearCompleted()}>
               Clear done
             </Button>

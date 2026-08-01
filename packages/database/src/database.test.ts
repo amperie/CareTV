@@ -249,6 +249,22 @@ describe("database repositories", () => {
     });
   });
 
+  it("clears only failed queue entries", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({ ...fakeQueueEntry("failed", "media-1", 1), status: "failed" });
+      queue.enqueue({ ...fakeQueueEntry("completed", "media-1", 2), status: "completed" });
+      queue.enqueue({ ...fakeQueueEntry("skipped", "media-1", 3), status: "skipped" });
+      queue.enqueue(fakeQueueEntry("queued", "media-1", 4));
+
+      expect(queue.clearFailed()).toBe(1);
+      expect(queue.list().map((entry) => entry.id)).toEqual(["completed", "skipped", "queued"]);
+    });
+  });
+
   it("requeues all completed entries in their original order", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);
