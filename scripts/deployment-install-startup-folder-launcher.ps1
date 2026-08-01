@@ -12,7 +12,7 @@ $launcherPath = Join-Path $startupDir "$Name.cmd"
 
 $content = @"
 @echo off
-start "$Name" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$wrapperPath" -TaskName "$Name" -StartScript "$scriptPath" -KeepOpen
+start "$Name" powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -File "$wrapperPath" -TaskName "$Name" -StartScript "$scriptPath" -KeepOpen
 "@
 
 Set-Content -Path $launcherPath -Value $content -Encoding ASCII
