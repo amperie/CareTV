@@ -169,7 +169,7 @@ function readConfigFile(path: string | undefined, cwd: string): Partial<CareTvCo
 
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(configPath, "utf8"));
+    raw = JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""));
   } catch (error) {
     throw new ConfigError(
       `Failed to read ${configPath}: ${error instanceof Error ? error.message : "invalid JSON"}`

@@ -56,7 +56,12 @@ $config = [ordered]@{
 }
 
 $configPath = Join-Path $repoRoot "caretv.config.json"
-$config | ConvertTo-Json | Set-Content -Encoding UTF8 $configPath
+$configJson = $config | ConvertTo-Json
+[System.IO.File]::WriteAllText(
+  $configPath,
+  $configJson,
+  [System.Text.UTF8Encoding]::new($false)
+)
 Write-Host "Wrote $configPath"
 
 if ($InstallDependencies) {

@@ -96,6 +96,27 @@ describe("config", () => {
     }
   });
 
+  it("loads config from a UTF-8 BOM file", () => {
+    const root = mkdtempSync(join(tmpdir(), "caretv-config-bom-"));
+
+    try {
+      writeFileSync(
+        join(root, "caretv.config.json"),
+        `\uFEFF${JSON.stringify({
+          applianceId: "bom-tv",
+          serverUrl: "http://caretv.lan:4010"
+        })}`
+      );
+
+      const config = loadConfig({}, { createDirectories: false, cwd: root });
+
+      expect(config.values.applianceId).toBe("bom-tv");
+      expect(config.values.serverUrl).toBe("http://caretv.lan:4010");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("lets environment variables override config file values", () => {
     const root = mkdtempSync(join(tmpdir(), "caretv-config-env-"));
 
