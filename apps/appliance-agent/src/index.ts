@@ -710,13 +710,13 @@ async function reportCommandStatus(
 }
 
 async function fail(queueEntryId: string, code: string, message: string): Promise<void> {
-  const updated = await reportQueueStatus(queueEntryId, "failed", {
+  await reportQueueStatus(queueEntryId, "failed", {
     completedAt: new Date().toISOString(),
     lastErrorCode: code,
     lastErrorMessage: message
   });
 
-  if (updated !== false && state.phase !== "idle") {
+  if (state.phase !== "idle") {
     await apply({ type: "FAILED", code, message });
   }
 }

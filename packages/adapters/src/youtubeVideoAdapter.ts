@@ -64,7 +64,11 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     const page = (session.page ??= await this.openPage(
       normalizeYouTubeUrl(youtubeUrlFor(context.mediaItem))
     ));
-    await page.waitForSelector([youtubeSelectors.video, ...youtubeSelectors.playButton]);
+    if (isTerminalStartupObservation(await this.observe(context))) return;
+
+    await page.waitForSelector([youtubeSelectors.video, ...youtubeSelectors.playButton], 5_000);
+    if (isTerminalStartupObservation(await this.observe(context))) return;
+
     await this.dismissKnownInterruptions(context);
     await page.clickFirst(youtubeSelectors.playButton);
     await page.clickByText(["play"]);
@@ -251,6 +255,10 @@ function isYouTubeUrl(input: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isTerminalStartupObservation(observation: PlaybackObservation): boolean {
+  return observation.status === "blocked" || observation.status === "error";
 }
 
 function normalizeYouTubeUrl(input: string): string {

@@ -30,9 +30,10 @@ const blockerPatterns = [
   },
   {
     code: "youtube-unavailable",
-    pattern: /video unavailable|this video is unavailable|removed by the uploader/i
+    pattern:
+      /video unavailable|this video is (?:not |un)?available|this video isn'?t available|removed by the uploader/i
   },
-  { code: "youtube-private", pattern: /private video/i },
+  { code: "youtube-private", pattern: /private video|this video is private|video is private/i },
   { code: "youtube-playback-error", pattern: /an error occurred|playback error/i }
 ];
 

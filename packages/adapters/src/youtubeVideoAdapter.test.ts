@@ -52,13 +52,30 @@ describe("youtube video adapter", () => {
     expect(page.centerClickSelectors).toHaveLength(0);
     expect(page.pressKeyCount).toBe(0);
   });
+
+  it("does not try to play private terminal pages during startup", async () => {
+    const page = new FakeBrowserPage("This video is private");
+    const adapter = new YouTubeVideoAdapter({
+      openPage: () => Promise.resolve(page)
+    });
+    const context = youtubeContext("https://youtu.be/abc123");
+
+    await adapter.prepare(context);
+    await adapter.start(context);
+
+    expect(page.playClickCount).toBe(0);
+    expect(page.centerClickSelectors).toHaveLength(0);
+    expect(page.pressKeyCount).toBe(0);
+  });
 });
 
 class FakeBrowserPage implements BrowserPage {
   public readonly evaluations: string[] = [];
   public readonly centerClickSelectors: string[] = [];
+  public playClickCount = 0;
   public pressKeyCount = 0;
   private fullscreen = false;
+  public constructor(private readonly text = "") {}
 
   public bringToFront(): Promise<void> {
     return Promise.resolve();
@@ -74,7 +91,10 @@ class FakeBrowserPage implements BrowserPage {
     return Promise.resolve(true);
   }
 
-  public clickFirst(): Promise<boolean> {
+  public clickFirst(selectors: string[]): Promise<boolean> {
+    if (selectors.some((selector) => selector.includes("ytp-play-button"))) {
+      this.playClickCount += 1;
+    }
     return Promise.resolve(false);
   }
 
@@ -84,6 +104,19 @@ class FakeBrowserPage implements BrowserPage {
 
   public evaluate<T>(expression: string): Promise<T> {
     this.evaluations.push(expression);
+    if (expression.includes("document.body?.innerText")) {
+      return Promise.resolve({
+        currentTime: 0,
+        duration: 90,
+        fullscreen: this.fullscreen,
+        hasAccountButton: false,
+        hasSignInButton: false,
+        hasVideo: !this.text,
+        paused: false,
+        readyState: this.text ? 0 : 4,
+        text: this.text
+      } as T);
+    }
     if (expression.includes("caretv-youtube-full-window")) {
       this.fullscreen = true;
     }

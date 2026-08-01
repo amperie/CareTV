@@ -39,6 +39,21 @@ describe("youtube selectors", () => {
     });
   });
 
+  it("reports private and unavailable terminal pages", () => {
+    expect(
+      observationFromYouTubeDom({ hasVideo: false, text: "This video is private" }, 900)
+    ).toMatchObject({
+      errorCode: "youtube-private",
+      status: "blocked"
+    });
+    expect(
+      observationFromYouTubeDom({ hasVideo: false, text: "This video isn't available anymore" }, 900)
+    ).toMatchObject({
+      errorCode: "youtube-unavailable",
+      status: "blocked"
+    });
+  });
+
   it("reports signed-out and verification blockers", () => {
     expect(
       observationFromYouTubeDom(
