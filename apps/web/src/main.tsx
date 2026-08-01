@@ -30,6 +30,7 @@ import {
   IconArrowDown,
   IconArrowUp,
   IconAlertTriangle,
+  IconEraser,
   IconExternalLink,
   IconLogin2,
   IconPlayerPause,
@@ -572,6 +573,18 @@ function App() {
     await refresh();
   }
 
+  async function clearQueueSlate() {
+    setQueueMessage("");
+    setFallbackMessage("");
+    try {
+      await post("/queue/clear-completed", {});
+    } catch {
+      setQueueMessage("Queue state could not be cleared.");
+      return;
+    }
+    await refresh();
+  }
+
   return (
     <MantineProvider defaultColorScheme="dark" theme={theme}>
       <AppShell header={{ height: 74 }} padding="md">
@@ -664,6 +677,7 @@ function App() {
                     status={status}
                     onClearCompleted={() => void clearCompleted()}
                     onClearFailed={() => void clearFailed()}
+                    onClearSlate={() => void clearQueueSlate()}
                     onMove={(id, direction) => void moveQueueEntry(id, direction)}
                     onPlay={(id) => void playQueueEntry(id)}
                     onRemove={(id) => void removeQueueEntry(id)}
@@ -730,6 +744,7 @@ function App() {
                     status={status}
                     onClearCompleted={() => void clearCompleted()}
                     onClearFailed={() => void clearFailed()}
+                    onClearSlate={() => void clearQueueSlate()}
                     onMove={(id, direction) => void moveQueueEntry(id, direction)}
                     onPlay={(id) => void playQueueEntry(id)}
                     onRemove={(id) => void removeQueueEntry(id)}
@@ -866,6 +881,7 @@ function QueuePanel(props: {
   status: PlaybackStatus | undefined;
   onClearCompleted: () => void;
   onClearFailed: () => void;
+  onClearSlate: () => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onPlay: (id: string) => void;
   onRemove: (id: string) => void;
@@ -875,6 +891,7 @@ function QueuePanel(props: {
     props.status?.queue.filter((entry) => isVisibleQueueEntry(entry, props.mediaById)) ?? [];
   const durationSummary = queueDurationSummary(visibleQueue, props.mediaById, props.status?.state);
   const failedCount = visibleQueue.filter((entry) => entry.status === "failed").length;
+  const terminalCount = visibleQueue.filter((entry) => isTerminalQueueStatus(entry.status)).length;
 
   return (
     <Card withBorder radius="md" shadow="xs">
@@ -885,6 +902,15 @@ function QueuePanel(props: {
             {visibleQueue.length ? <Badge variant="light">{visibleQueue.length}</Badge> : null}
           </Group>
           <Group gap="xs">
+            <Button
+              disabled={terminalCount === 0 && !props.message}
+              leftSection={<IconEraser size={16} />}
+              size="xs"
+              variant="light"
+              onClick={() => props.onClearSlate()}
+            >
+              Clean slate
+            </Button>
             <Button
               color="red"
               disabled={failedCount === 0}
