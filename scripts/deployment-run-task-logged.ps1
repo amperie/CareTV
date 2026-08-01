@@ -1,7 +1,8 @@
 param(
   [string]$TaskName = "CareTV Appliance",
   [Parameter(Mandatory = $true)]
-  [string]$StartScript
+  [string]$StartScript,
+  [switch]$KeepOpen
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +15,8 @@ $logPath = Join-Path $logDir "$($TaskName -replace '[^a-zA-Z0-9._-]', '_')-$time
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 Start-Transcript -Path $logPath -Force | Out-Null
 
+$exitCode = 0
+
 try {
   Write-Host "Task: $TaskName"
   Write-Host "User: $env:USERDOMAIN\$env:USERNAME"
@@ -22,10 +25,21 @@ try {
   Write-Host "PATH: $env:PATH"
   Set-Location $repoRoot
   & (Resolve-Path $StartScript)
-  exit $LASTEXITCODE
+  $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+  if ($exitCode -ne 0) {
+    throw "Startup script exited with code $exitCode."
+  }
 } catch {
   Write-Error $_
-  exit 1
+  $exitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
 } finally {
   Stop-Transcript | Out-Null
 }
+
+if ($KeepOpen -and $exitCode -ne 0) {
+  Write-Host ""
+  Write-Host "CareTV startup failed. Log file: $logPath"
+  Read-Host "Press Enter to close"
+}
+
+exit $exitCode

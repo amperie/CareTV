@@ -9,22 +9,22 @@ $env:CARETV_WEB_PORT = if ($env:CARETV_WEB_PORT) { $env:CARETV_WEB_PORT } else {
 
 if (Get-Command pnpm.cmd -ErrorAction SilentlyContinue) {
   pnpm.cmd dev
-  exit $LASTEXITCODE
+  return
 }
 
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
   pnpm dev
-  exit $LASTEXITCODE
+  return
 }
 
 if (Get-Command corepack.cmd -ErrorAction SilentlyContinue) {
   corepack.cmd pnpm dev
-  exit $LASTEXITCODE
+  return
 }
 
 if (Get-Command corepack -ErrorAction SilentlyContinue) {
   corepack pnpm dev
-  exit $LASTEXITCODE
+  return
 }
 
 Write-Error "Neither pnpm nor corepack was found. Install Node.js LTS with Corepack enabled."

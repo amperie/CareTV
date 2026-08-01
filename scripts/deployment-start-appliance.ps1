@@ -13,22 +13,22 @@ if (Test-Path $configPath) {
 
 if (Get-Command pnpm.cmd -ErrorAction SilentlyContinue) {
   pnpm.cmd dev:appliance
-  exit $LASTEXITCODE
+  return
 }
 
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
   pnpm dev:appliance
-  exit $LASTEXITCODE
+  return
 }
 
 if (Get-Command corepack.cmd -ErrorAction SilentlyContinue) {
   corepack.cmd pnpm dev:appliance
-  exit $LASTEXITCODE
+  return
 }
 
 if (Get-Command corepack -ErrorAction SilentlyContinue) {
   corepack pnpm dev:appliance
-  exit $LASTEXITCODE
+  return
 }
 
 Write-Error "Neither pnpm nor corepack was found. Install Node.js LTS with Corepack enabled."
