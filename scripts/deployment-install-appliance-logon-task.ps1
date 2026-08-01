@@ -19,7 +19,7 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $principal = New-ScheduledTaskPrincipal `
   -UserId $userId `
   -LogonType Interactive `
-  -RunLevel LeastPrivilege
+  -RunLevel Limited
 
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
