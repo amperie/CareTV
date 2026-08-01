@@ -625,6 +625,19 @@ async function reportQueueStatus(
     .updateQueueStatus(queueEntryId, status, fields)
     .then(() => true)
     .catch((error) => {
+      if (isConflictResponseError(error)) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            message: "Queue status update conflicted; dropping report.",
+            queueEntryId,
+            status,
+            error: error instanceof Error ? error.message : "Unknown error"
+          })
+        );
+        return false;
+      }
+
       pendingQueueReports.set(queueEntryId, { fields, status });
       console.warn(
         JSON.stringify({
@@ -645,6 +658,20 @@ async function flushPendingQueueReports(): Promise<void> {
       await client.updateQueueStatus(queueEntryId, report.status, report.fields);
       pendingQueueReports.delete(queueEntryId);
     } catch (error) {
+      if (isConflictResponseError(error)) {
+        pendingQueueReports.delete(queueEntryId);
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            message: "Pending queue status update conflicted; dropping report.",
+            queueEntryId,
+            status: report.status,
+            error: error instanceof Error ? error.message : "Unknown error"
+          })
+        );
+        continue;
+      }
+
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -658,6 +685,11 @@ async function flushPendingQueueReports(): Promise<void> {
     }
   }
 }
+
+function isConflictResponseError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(" failed with 409");
+}
+
 async function reportCommandStatus(
   commandId: string,
   status: PlaybackCommand["status"]
