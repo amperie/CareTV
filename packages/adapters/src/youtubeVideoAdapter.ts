@@ -167,6 +167,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     }
 
     await this.dismissKnownInterruptions(context);
+    const expectedVideoId = youTubeVideoId(youtubeUrlFor(context.mediaItem));
     const state = await page.evaluate<YouTubeDomState>(`(() => {
       const video = document.querySelector("${youtubeSelectors.video}");
       const player = document.querySelector(".html5-video-player");
@@ -196,7 +197,10 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
         text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim()
       };
     })()`);
-    return observationFromYouTubeDom(state, durationSecondsFor(context.mediaItem, 900));
+    return observationFromYouTubeDom(
+      { ...state, ...(expectedVideoId ? { expectedVideoId } : {}) },
+      durationSecondsFor(context.mediaItem, 900)
+    );
   }
 
   public async dismissKnownInterruptions(context: AdapterContext): Promise<boolean> {
@@ -263,9 +267,7 @@ function isTerminalStartupObservation(observation: PlaybackObservation): boolean
 
 function normalizeYouTubeUrl(input: string): string {
   const url = new URL(input);
-  const host = url.hostname.replace(/^www\./, "");
-  const id =
-    host === "youtu.be" ? url.pathname.split("/").filter(Boolean)[0] : url.searchParams.get("v");
+  const id = youTubeVideoId(input);
 
   if (id) {
     return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}&start=0`;
@@ -276,6 +278,18 @@ function normalizeYouTubeUrl(input: string): string {
   url.searchParams.delete("start");
   url.searchParams.delete("time_continue");
   return url.href;
+}
+
+function youTubeVideoId(input: string): string | undefined {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, "");
+    return host === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : (url.searchParams.get("v") ?? undefined);
+  } catch {
+    return undefined;
+  }
 }
 
 function youtubeUrlFor(item: MediaItem): string {

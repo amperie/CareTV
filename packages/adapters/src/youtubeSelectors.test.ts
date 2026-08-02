@@ -54,6 +54,47 @@ describe("youtube selectors", () => {
     });
   });
 
+  it("completes when YouTube has navigated to a different video", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          currentTime: 12,
+          currentUrl: "https://www.youtube.com/watch?v=next456",
+          duration: 90,
+          expectedVideoId: "abc123",
+          hasVideo: true,
+          paused: false,
+          readyState: 4,
+          text: ""
+        },
+        900
+      )
+    ).toMatchObject({
+      status: "completed"
+    });
+  });
+
+  it("keeps playing when YouTube is still on the expected video", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          currentTime: 12,
+          currentUrl: "https://www.youtube.com/watch?v=abc123",
+          duration: 90,
+          expectedVideoId: "abc123",
+          hasVideo: true,
+          paused: false,
+          readyState: 4,
+          text: ""
+        },
+        900
+      )
+    ).toMatchObject({
+      positionSeconds: 12,
+      status: "playing"
+    });
+  });
+
   it("reports signed-out and verification blockers", () => {
     expect(
       observationFromYouTubeDom(

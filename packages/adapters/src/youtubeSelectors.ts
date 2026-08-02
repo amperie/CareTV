@@ -4,6 +4,7 @@ import { videoObservation, type VideoDomState } from "./videoObservation.js";
 export interface YouTubeDomState extends VideoDomState {
   adShowing?: boolean;
   currentUrl?: string;
+  expectedVideoId?: string;
   hasAccountButton?: boolean;
   hasSignInButton?: boolean;
   text: string;
@@ -52,6 +53,16 @@ export function observationFromYouTubeDom(
     return blocked("youtube-signin-required", state.text);
   }
 
+  const actualVideoId = currentVideoId(state.currentUrl);
+  if (
+    state.hasVideo &&
+    state.expectedVideoId &&
+    actualVideoId &&
+    actualVideoId !== state.expectedVideoId
+  ) {
+    return { status: "completed", positionSeconds: 0, durationSeconds: fallbackDurationSeconds };
+  }
+
   if (!state.hasVideo && state.hasSignInButton && !state.hasAccountButton) {
     return blocked("youtube-signin-required", state.text);
   }
@@ -92,5 +103,18 @@ function hostname(input: string): string {
     return new URL(input).hostname;
   } catch {
     return "";
+  }
+}
+
+function currentVideoId(input: string | undefined): string | undefined {
+  if (!input) return undefined;
+
+  try {
+    const url = new URL(input);
+    return url.hostname.replace(/^www\./, "") === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : (url.searchParams.get("v") ?? undefined);
+  } catch {
+    return undefined;
   }
 }
