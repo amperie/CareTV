@@ -12,25 +12,25 @@ if (Test-Path $configPath) {
 }
 
 if (Get-Command pnpm.cmd -ErrorAction SilentlyContinue) {
-  pnpm.cmd --filter @caretv/adapters build
+  pnpm.cmd --filter "./packages/*" build
   pnpm.cmd dev:appliance
   return
 }
 
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
-  pnpm --filter @caretv/adapters build
+  pnpm --filter "./packages/*" build
   pnpm dev:appliance
   return
 }
 
 if (Get-Command corepack.cmd -ErrorAction SilentlyContinue) {
-  corepack.cmd pnpm --filter @caretv/adapters build
+  corepack.cmd pnpm --filter "./packages/*" build
   corepack.cmd pnpm dev:appliance
   return
 }
 
 if (Get-Command corepack -ErrorAction SilentlyContinue) {
-  corepack pnpm --filter @caretv/adapters build
+  corepack pnpm --filter "./packages/*" build
   corepack pnpm dev:appliance
   return
 }
