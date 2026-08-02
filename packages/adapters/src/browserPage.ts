@@ -18,6 +18,7 @@ export interface BrowserPage {
 }
 
 export const browserPageClosedCode = "browser-page-closed";
+const cdpCommandTimeoutMs = 10_000;
 
 export interface ChromeBrowserOptions {
   chromePath?: string;
@@ -391,11 +392,25 @@ class CdpBrowserPage implements BrowserPage {
     const message = JSON.stringify({ id, method, params });
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { reject, resolve });
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`cdp-command-timeout: ${method}`));
+      }, cdpCommandTimeoutMs);
+      this.pending.set(id, {
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolve(value);
+        }
+      });
       try {
         this.socket.send(message);
       } catch {
         this.pending.delete(id);
+        clearTimeout(timeout);
         reject(browserPageClosedError());
       }
     });
