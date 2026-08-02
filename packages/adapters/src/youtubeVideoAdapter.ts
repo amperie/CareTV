@@ -171,6 +171,10 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     const state = await page.evaluate<YouTubeDomState>(`(() => {
       const video = document.querySelector("${youtubeSelectors.video}");
       const player = document.querySelector(".html5-video-player");
+      const errorText = Array.from(
+        document.querySelectorAll("#error-screen, .ytp-error, .ytp-error-content-wrap, ytd-player-error-message-renderer")
+      ).map((element) => element.textContent || "").join(" ");
+      const text = [document.body?.innerText || "", errorText].join(" ").replace(/\\s+/g, " ").trim();
       return {
         adShowing: Boolean(
           player?.classList.contains("ad-showing") ||
@@ -194,7 +198,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
         hasVideo: Boolean(video),
         paused: video?.paused,
         readyState: video?.readyState,
-        text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim()
+        text
       };
     })()`);
     return observationFromYouTubeDom(

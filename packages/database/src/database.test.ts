@@ -214,6 +214,10 @@ describe("database repositories", () => {
         status: "failed",
         lastErrorCode: "agent-error"
       });
+
+      queue.enqueue({ ...fakeQueueEntry("active", "media-1", 2), status: "playing" });
+      expect(queue.updateStatus("active", "failed")).toBe(true);
+      expect(queue.get("active")).toMatchObject({ attemptCount: 1, status: "failed" });
     });
   });
 
@@ -301,18 +305,28 @@ describe("database repositories", () => {
         completedAt: now
       });
       queue.enqueue({
-        ...fakeQueueEntry("failed", "media-1", 3),
+        ...fakeQueueEntry("retryable-failed", "media-1", 3),
         status: "failed",
-        completedAt: now
+        completedAt: now,
+        attemptCount: 1,
+        lastErrorCode: "browser-recovery-failed"
+      });
+      queue.enqueue({
+        ...fakeQueueEntry("terminal-failed", "media-1", 4),
+        status: "failed",
+        completedAt: now,
+        attemptCount: 1,
+        lastErrorCode: "youtube-unavailable"
       });
 
-      expect(queue.requeueCompletedEntries()).toBe(2);
+      expect(queue.requeueCompletedEntries()).toBe(3);
       expect(queue.list()).toMatchObject([
         { id: "completed", status: "queued", position: 1 },
         { id: "skipped", status: "queued", position: 2 },
-        { id: "failed", status: "failed", position: 3 }
+        { id: "retryable-failed", status: "queued", position: 3 },
+        { id: "terminal-failed", status: "failed", position: 4 }
       ]);
-      expect(queue.runnableCount()).toBe(2);
+      expect(queue.runnableCount()).toBe(3);
     });
   });
 

@@ -113,6 +113,10 @@ export class QueueRepository {
               last_error_message = CASE
                 WHEN ? IN ('completed', 'skipped') THEN NULL
                 ELSE COALESCE(?, last_error_message)
+              END,
+              attempt_count = CASE
+                WHEN ? = 'failed' THEN attempt_count + 1
+                ELSE attempt_count
               END
           WHERE id = ?
         `
@@ -124,6 +128,7 @@ export class QueueRepository {
         fields.lastErrorCode ?? null,
         status,
         fields.lastErrorMessage ?? null,
+        status,
         id
       );
 
@@ -211,6 +216,23 @@ export class QueueRepository {
               last_error_code = NULL,
               last_error_message = NULL
           WHERE status IN ('completed', 'skipped')
+             OR (
+              status = 'failed'
+              AND attempt_count < 2
+              AND (
+                last_error_code IS NULL
+                OR last_error_code NOT IN (
+                  'adapter-not-found',
+                  'media-not-found',
+                  'youtube-age-verification-required',
+                  'youtube-consent-required',
+                  'youtube-private',
+                  'youtube-signin-required',
+                  'youtube-unavailable',
+                  'youtube-verification-required'
+                )
+              )
+            )
         `
       )
       .run();

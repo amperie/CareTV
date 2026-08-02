@@ -74,6 +74,27 @@ describe("youtube selectors", () => {
     });
   });
 
+  it("reports unavailable before treating a different YouTube video as completed", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          currentTime: 0,
+          currentUrl: "https://www.youtube.com/watch?v=next456",
+          duration: 0,
+          expectedVideoId: "abc123",
+          hasVideo: true,
+          paused: true,
+          readyState: 0,
+          text: "Video unavailable"
+        },
+        900
+      )
+    ).toMatchObject({
+      errorCode: "youtube-unavailable",
+      status: "blocked"
+    });
+  });
+
   it("keeps playing when YouTube is still on the expected video", () => {
     expect(
       observationFromYouTubeDom(

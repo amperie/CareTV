@@ -79,6 +79,7 @@ app.get("/api/v1/playlists", () => playlists.list());
 app.get("/api/v1/queue", () => queue.listPlaybackOrder());
 app.get("/api/v1/appliances", () => appliances.list(new Date()));
 app.get("/api/v1/playback/status", () => {
+  clearStaleStartingQueueEntries();
   const appliance = appliances.latest(new Date());
   const playback = playbackSettings();
   return {
@@ -888,6 +889,7 @@ app.get("/api/v1/appliance/media/:id", (request, reply) => {
 
 app.post("/api/v1/appliance/queue/next", () => {
   const now = new Date().toISOString();
+  clearStaleStartingQueueEntries();
   const active = queue.active();
 
   if (active) {

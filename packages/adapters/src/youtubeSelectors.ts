@@ -53,16 +53,6 @@ export function observationFromYouTubeDom(
     return blocked("youtube-signin-required", state.text);
   }
 
-  const actualVideoId = currentVideoId(state.currentUrl);
-  if (
-    state.hasVideo &&
-    state.expectedVideoId &&
-    actualVideoId &&
-    actualVideoId !== state.expectedVideoId
-  ) {
-    return { status: "completed", positionSeconds: 0, durationSeconds: fallbackDurationSeconds };
-  }
-
   if (!state.hasVideo && state.hasSignInButton && !state.hasAccountButton) {
     return blocked("youtube-signin-required", state.text);
   }
@@ -73,6 +63,16 @@ export function observationFromYouTubeDom(
     return blocker.code === "youtube-playback-error"
       ? { status: "error", errorCode: blocker.code, dialog: state.text.slice(0, 300) }
       : blocked(blocker.code, state.text);
+  }
+
+  const actualVideoId = currentVideoId(state.currentUrl);
+  if (
+    state.hasVideo &&
+    state.expectedVideoId &&
+    actualVideoId &&
+    actualVideoId !== state.expectedVideoId
+  ) {
+    return { status: "completed", positionSeconds: 0, durationSeconds: fallbackDurationSeconds };
   }
 
   if (state.adShowing) {
