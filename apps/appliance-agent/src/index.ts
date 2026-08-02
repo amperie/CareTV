@@ -323,8 +323,7 @@ async function startWithRecovery(
   context: AdapterContext
 ): Promise<boolean> {
   try {
-    await startPlayback(streamingAdapter, context);
-    return true;
+    return !(await startPlayback(queueEntryId, streamingAdapter, context));
   } catch (error) {
     if (!isBrowserPageClosedError(error)) {
       throw error;
@@ -335,16 +334,24 @@ async function startWithRecovery(
 }
 
 async function startPlayback(
+  queueEntryId: string,
   streamingAdapter: StreamingAdapter,
   context: AdapterContext
-): Promise<void> {
+): Promise<"completed" | "failed" | undefined> {
   await streamingAdapter.prepare(context);
   await apply({ type: "BROWSER_LAUNCHED" });
   await streamingAdapter.start(context);
+  const startupObservation = await streamingAdapter.observe(context);
+
+  if (isTerminalStartupObservation(startupObservation)) {
+    return applyObservation(queueEntryId, streamingAdapter, context, startupObservation);
+  }
+
   await streamingAdapter.enterFullscreen(context);
   await streamingAdapter.resume(context);
   await streamingAdapter.enterFullscreen(context);
   await apply({ type: "READY" });
+  return undefined;
 }
 
 async function monitor(
@@ -455,6 +462,13 @@ async function recoverClosedPage(
 
     if (!recovery.recovered) {
       await fail(queueEntryId, "browser-recovery-failed", recovery.message);
+      return false;
+    }
+
+    const observation = await streamingAdapter.observe(context);
+
+    if (isTerminalStartupObservation(observation)) {
+      await applyObservation(queueEntryId, streamingAdapter, context, observation);
       return false;
     }
 
@@ -786,6 +800,14 @@ function canApplyCommand(command: PlaybackCommand, phase: PlaybackState["phase"]
 
 function canSelectQueueEntry(): boolean {
   return state.phase === "idle" || state.phase === "failed";
+}
+
+function isTerminalStartupObservation(observation: PlaybackObservation): boolean {
+  return (
+    observation.status === "blocked" ||
+    observation.status === "completed" ||
+    observation.status === "error"
+  );
 }
 
 function positionEvent(

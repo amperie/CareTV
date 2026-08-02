@@ -230,6 +230,9 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
     await session.page?.close().catch(() => undefined);
     delete session.page;
     await this.start(context);
+    if (isTerminalStartupObservation(await this.observe(context))) {
+      return { recovered: true, message: "YouTube page is in a terminal state." };
+    }
     await this.resume(context);
     await this.enterFullscreen(context);
     return { recovered: true, message: "YouTube browser relaunched." };
