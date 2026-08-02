@@ -1,4 +1,12 @@
-import { createWriteStream } from "node:fs";
+import {
+  closeSync,
+  createWriteStream,
+  existsSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { access, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
@@ -19,6 +27,7 @@ import { createIdleState, transition } from "@caretv/state-machine";
 import type { PlaybackStateEvent } from "@caretv/state-machine";
 
 const config = loadConfig();
+const releaseApplianceLock = acquireApplianceLock();
 const adapters: StreamingAdapter[] = [
   new YouTubeVideoAdapter({ userDataDir: config.values.chromeProfileDir }),
   new PrimeVideoAdapter({ userDataDir: config.values.chromeProfileDir }),
@@ -1091,6 +1100,16 @@ const client = new ServerClient(config.values.serverUrl, config.values.appliance
 
 void main();
 
+process.once("exit", releaseApplianceLock);
+process.once("SIGINT", () => {
+  releaseApplianceLock();
+  process.exit(130);
+});
+process.once("SIGTERM", () => {
+  releaseApplianceLock();
+  process.exit(143);
+});
+
 function shouldQueueYouTubeFallback(code: string | undefined): boolean {
   return Boolean(
     code &&
@@ -1221,4 +1240,53 @@ function isInsideMediaDir(localPath: string): boolean {
 
 function isMissingFileError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+function acquireApplianceLock(): () => void {
+  const lockPath = join(config.values.runtimeDir, `${config.values.applianceId}.lock`);
+
+  if (existsSync(lockPath)) {
+    const pid = lockPid(lockPath);
+
+    if (pid && pid !== process.pid && isProcessRunning(pid)) {
+      throw new Error(
+        `Appliance agent already running for ${config.values.applianceId} as PID ${pid}.`
+      );
+    }
+
+    unlinkSync(lockPath);
+  }
+
+  const fd = openSync(lockPath, "wx");
+  let released = false;
+  writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+
+  return () => {
+    if (released) return;
+    released = true;
+    closeSync(fd);
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // Best effort cleanup; stale locks are handled on the next startup.
+    }
+  };
+}
+
+function lockPid(lockPath: string): number | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: unknown };
+    return typeof parsed.pid === "number" && Number.isInteger(parsed.pid) ? parsed.pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }

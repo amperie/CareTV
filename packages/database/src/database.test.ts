@@ -300,11 +300,17 @@ describe("database repositories", () => {
         status: "skipped",
         completedAt: now
       });
+      queue.enqueue({
+        ...fakeQueueEntry("failed", "media-1", 3),
+        status: "failed",
+        completedAt: now
+      });
 
       expect(queue.requeueCompletedEntries()).toBe(2);
       expect(queue.list()).toMatchObject([
         { id: "completed", status: "queued", position: 1 },
-        { id: "skipped", status: "queued", position: 2 }
+        { id: "skipped", status: "queued", position: 2 },
+        { id: "failed", status: "failed", position: 3 }
       ]);
       expect(queue.runnableCount()).toBe(2);
     });

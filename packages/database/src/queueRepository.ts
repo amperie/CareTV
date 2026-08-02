@@ -210,7 +210,7 @@ export class QueueRepository {
               completed_at = NULL,
               last_error_code = NULL,
               last_error_message = NULL
-          WHERE status IN ('completed', 'failed', 'skipped')
+          WHERE status IN ('completed', 'skipped')
         `
       )
       .run();
