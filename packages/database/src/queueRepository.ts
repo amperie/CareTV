@@ -324,6 +324,21 @@ export class QueueRepository {
     return Number(result.changes);
   }
 
+  public reconcileStaleStarting(status: QueueEntryStatus, startedBefore: string): number {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET status = ?, completed_at = COALESCE(completed_at, ?)
+          WHERE status = 'starting'
+            AND (started_at IS NULL OR started_at < ?)
+        `
+      )
+      .run(status, new Date().toISOString(), startedBefore);
+
+    return Number(result.changes);
+  }
+
   public get(id: string): QueueEntry | undefined {
     const row = this.db.prepare("SELECT * FROM queue_entries WHERE id = ?").get(id) as unknown as
       QueueRow | undefined;

@@ -327,6 +327,8 @@ app.delete("/api/v1/queue/:id", (request, reply) => {
 });
 
 app.post("/api/v1/queue/:id/play", (request, reply) => {
+  clearStaleStartingQueueEntries();
+
   if (!queue.promoteToNext(routeParam(request.params, "id"))) {
     reply.code(409);
     return { error: "queue-entry-not-playable" };
@@ -1291,6 +1293,8 @@ function reconcileQueueWithApplianceState(state: PlaybackState | undefined): voi
     return;
   }
 
+  clearStaleStartingQueueEntries();
+
   const idleStaleMs = Math.max(config.values.applianceHeartbeatMs * 12, 10 * 60_000);
   const startedBefore = new Date(Date.now() - idleStaleMs).toISOString();
   const reconciled = queue.reconcileStaleActive(
@@ -1301,6 +1305,19 @@ function reconcileQueueWithApplianceState(state: PlaybackState | undefined): voi
 
   if (reconciled > 0) {
     app.log.warn({ reconciled, phase: state.phase }, "Reconciled stale active queue entries");
+  }
+}
+
+function clearStaleStartingQueueEntries(): void {
+  const staleStartingMs = Math.max(
+    config.values.applianceRequestTimeoutMs * 2,
+    config.values.applianceHeartbeatMs * 2
+  );
+  const startedBefore = new Date(Date.now() - staleStartingMs).toISOString();
+  const reconciled = queue.reconcileStaleStarting("skipped", startedBefore);
+
+  if (reconciled > 0) {
+    app.log.warn({ reconciled }, "Reconciled stale starting queue entries");
   }
 }
 

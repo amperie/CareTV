@@ -11,13 +11,13 @@ if (Test-Path $configPath) {
 }
 
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
-  pnpm --filter @caretv/adapters build
+  pnpm --filter "./packages/*" build
   pnpm dev:appliance
   exit $LASTEXITCODE
 }
 
 if (Get-Command corepack -ErrorAction SilentlyContinue) {
-  corepack pnpm --filter @caretv/adapters build
+  corepack pnpm --filter "./packages/*" build
   corepack pnpm dev:appliance
   exit $LASTEXITCODE
 }

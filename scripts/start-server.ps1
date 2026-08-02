@@ -5,11 +5,13 @@ $env:CARETV_SERVER_PORT = if ($env:CARETV_SERVER_PORT) { $env:CARETV_SERVER_PORT
 $env:CARETV_WEB_PORT = if ($env:CARETV_WEB_PORT) { $env:CARETV_WEB_PORT } else { "4020" }
 
 if (Get-Command pnpm -ErrorAction SilentlyContinue) {
+  pnpm --filter "./packages/*" build
   pnpm dev:server
   exit $LASTEXITCODE
 }
 
 if (Get-Command corepack -ErrorAction SilentlyContinue) {
+  corepack pnpm --filter "./packages/*" build
   corepack pnpm dev:server
   exit $LASTEXITCODE
 }
