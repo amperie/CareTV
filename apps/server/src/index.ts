@@ -1281,12 +1281,21 @@ function reconcileQueueWithApplianceState(state: PlaybackState | undefined): voi
     return;
   }
 
+  if (state.phase === "failed") {
+    const active = queue.active();
+
+    if (state.queueEntryId && active?.id === state.queueEntryId) {
+      queue.updateStatus(state.queueEntryId, "failed", { lastErrorCode: "appliance-failed" });
+    }
+
+    return;
+  }
+
   const idleStaleMs = Math.max(config.values.applianceHeartbeatMs * 12, 10 * 60_000);
-  const startedBefore =
-    state.phase === "idle" ? new Date(Date.now() - idleStaleMs).toISOString() : undefined;
+  const startedBefore = new Date(Date.now() - idleStaleMs).toISOString();
   const reconciled = queue.reconcileStaleActive(
-    state.phase === "failed" ? "failed" : "skipped",
-    state.phase === "failed" ? "appliance-failed" : "appliance-idle",
+    "skipped",
+    "appliance-idle",
     startedBefore
   );
 
