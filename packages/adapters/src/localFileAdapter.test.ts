@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -85,6 +85,32 @@ describe("local file adapter", () => {
     await expect(adapter.prepare(context)).rejects.toThrow();
   });
 
+  it("only supports MP4 local files", async () => {
+    const adapter = new LocalFileAdapter({
+      openPlayer: () => Promise.resolve(new FakePlayerPage(1))
+    });
+    expect(adapter.supports(localMedia("E:\\media\\movie.mp4", 10))).toBe(true);
+    expect(adapter.supports(localMedia("E:\\media\\movie.MP4", 10))).toBe(true);
+    expect(adapter.supports(localMedia("E:\\media\\movie.mkv", 10))).toBe(false);
+  });
+
+  it("rejects non-MP4 local files during preparation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "caretv-local-adapter-"));
+    const localPath = join(root, "movie.mkv");
+    writeFileSync(localPath, "not an mp4");
+
+    try {
+      const adapter = new LocalFileAdapter({
+        openPlayer: () => Promise.resolve(new FakePlayerPage(1))
+      });
+      await expect(adapter.prepare(localContext(localMedia(localPath, 10)))).rejects.toThrow(
+        /not an MP4/
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects directories and empty files during preparation", async () => {
     const root = mkdtempSync(join(tmpdir(), "caretv-local-adapter-"));
     const emptyPath = join(root, "empty.mp4");
@@ -106,6 +132,49 @@ describe("local file adapter", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("waits for local files to stop changing before preparing playback", async () => {
+    await withMediaFile(async (localPath) => {
+      let appended = false;
+      const adapter = new LocalFileAdapter({
+        fileStableMs: 40,
+        fileStablePollMs: 10,
+        fileStableTimeoutMs: 500,
+        openPlayer: () => Promise.resolve(new FakePlayerPage(10))
+      });
+      const appendTimer = setTimeout(() => {
+        appendFileSync(localPath, "more encoded bytes");
+        appended = true;
+      }, 15);
+
+      try {
+        await adapter.prepare(localContext(localMedia(localPath, 10)));
+        expect(appended).toBe(true);
+      } finally {
+        clearTimeout(appendTimer);
+      }
+    });
+  });
+
+  it("rejects local files that keep changing during preparation", async () => {
+    await withMediaFile(async (localPath) => {
+      const adapter = new LocalFileAdapter({
+        fileStableMs: 40,
+        fileStablePollMs: 10,
+        fileStableTimeoutMs: 80,
+        openPlayer: () => Promise.resolve(new FakePlayerPage(10))
+      });
+      const appendTimer = setInterval(() => appendFileSync(localPath, "more"), 10);
+
+      try {
+        await expect(adapter.prepare(localContext(localMedia(localPath, 10)))).rejects.toThrow(
+          /still changing/
+        );
+      } finally {
+        clearInterval(appendTimer);
+      }
+    });
   });
 
   it("fails when Chrome plays audio without decoded video frames", async () => {

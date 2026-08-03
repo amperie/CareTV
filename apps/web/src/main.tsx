@@ -1112,7 +1112,7 @@ function MediaPanel(props: {
         <Group justify="space-between">
           <Title order={3}>Discovered media</Title>
           <FileButton
-            accept="video/*,.mkv,.avi"
+            accept="video/mp4,.mp4"
             onChange={(file) => props.onUpload(file ?? undefined)}
           >
             {(fileProps) => (

@@ -175,6 +175,7 @@ Useful deployment scripts:
 - `scripts\deployment-restart-appliance.ps1`: restart appliance only
 - `scripts\deployment-install-appliance-logon-task.ps1`: install user logon scheduled task; requires suitable Task Scheduler permissions, usually elevated PowerShell
 - `scripts\deployment-uninstall-appliance-logon-task.ps1`: remove scheduled task
+- `scripts\deployment-uninstall-startup-folder-launcher.ps1`: remove current-user Startup folder launcher
 - `scripts\deployment-test-appliance-logon-task.ps1`: trigger the scheduled task manually
 - `scripts\deployment-clean-stale-runtime.ps1`: clean stale local runtime state
 
@@ -200,6 +201,7 @@ For a single machine running server, dashboard, and appliance:
 
 Use `-StartupMethod ScheduledTask` only when running from elevated PowerShell or when Task Scheduler
 permissions are already known to work for the current user.
+The setup script removes the other autostart method so only one appliance launcher is installed.
 
 To also configure Windows auto-login, download Sysinternals Autologon and pass its executable:
 

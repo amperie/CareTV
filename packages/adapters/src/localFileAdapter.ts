@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { access, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { MediaItem } from "@caretv/core";
@@ -46,6 +46,9 @@ export interface PlayerPage {
 
 export interface LocalFileAdapterOptions {
   chromePath?: string;
+  fileStableMs?: number;
+  fileStablePollMs?: number;
+  fileStableTimeoutMs?: number;
   playerDir?: string;
   remoteDebuggingPort?: number;
   userDataDir?: string;
@@ -57,6 +60,9 @@ export class LocalFileAdapter implements StreamingAdapter {
   public readonly version = "0.2.0";
 
   private readonly openPlayer: (localPath: string) => Promise<PlayerPage>;
+  private readonly fileStableMs: number;
+  private readonly fileStablePollMs: number;
+  private readonly fileStableTimeoutMs: number;
   private readonly sessions = new Map<string, LocalFileSession>();
 
   public constructor(options: LocalFileAdapterOptions = {}) {
@@ -68,26 +74,33 @@ export class LocalFileAdapter implements StreamingAdapter {
     };
     const browser = options.openPlayer ? undefined : new ChromeLocalPlayerBrowser(browserOptions);
     this.openPlayer = options.openPlayer ?? ((localPath) => browser!.open(localPath));
+    this.fileStableMs = options.fileStableMs ?? 250;
+    this.fileStablePollMs = options.fileStablePollMs ?? 100;
+    this.fileStableTimeoutMs = options.fileStableTimeoutMs ?? 30_000;
   }
 
   public supports(item: MediaItem): boolean {
-    return item.service === "local" && item.mediaType === "local-file" && Boolean(item.localPath);
+    return (
+      item.service === "local" &&
+      item.mediaType === "local-file" &&
+      Boolean(item.localPath) &&
+      isSupportedLocalFile(item.localPath)
+    );
   }
 
   public async prepare(context: AdapterContext): Promise<void> {
     throwIfAborted(context.signal);
     const localPath = localPathFor(context.mediaItem);
-    const file = await stat(localPath);
-
-    if (!file.isFile()) {
-      throw new Error(`Local media item ${context.mediaItem.id} is not a file: ${localPath}`);
-    }
-
-    if (file.size <= 0) {
-      throw new Error(`Local media item ${context.mediaItem.id} is empty: ${localPath}`);
+    if (!isSupportedLocalFile(localPath)) {
+      throw new Error(`Local media item ${context.mediaItem.id} is not an MP4 file: ${localPath}`);
     }
 
     await access(localPath);
+    await waitForStableFile(localPath, context, {
+      pollMs: this.fileStablePollMs,
+      stableMs: this.fileStableMs,
+      timeoutMs: this.fileStableTimeoutMs
+    });
     this.sessions.set(context.mediaItem.id, { localPath });
   }
 
@@ -182,7 +195,11 @@ export class LocalFileAdapter implements StreamingAdapter {
     const session = this.session(context);
     await session.page?.close().catch(() => undefined);
     delete session.page;
-    await stat(session.localPath);
+    await waitForStableFile(session.localPath, context, {
+      pollMs: this.fileStablePollMs,
+      stableMs: this.fileStableMs,
+      timeoutMs: this.fileStableTimeoutMs
+    });
     await this.start(context);
     await this.enterFullscreen(context);
     return { recovered: true, message: "Local file browser relaunched." };
@@ -570,6 +587,46 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function waitForStableFile(
+  localPath: string,
+  context: AdapterContext,
+  options: { pollMs: number; stableMs: number; timeoutMs: number }
+): Promise<void> {
+  const deadline = Date.now() + options.timeoutMs;
+  let stableSince = 0;
+  let previous: { mtimeMs: number; size: number } | undefined;
+
+  while (Date.now() <= deadline) {
+    throwIfAborted(context.signal);
+    const file = await stat(localPath);
+
+    if (!file.isFile()) {
+      throw new Error(`Local media item ${context.mediaItem.id} is not a file: ${localPath}`);
+    }
+
+    if (file.size <= 0) {
+      throw new Error(`Local media item ${context.mediaItem.id} is empty: ${localPath}`);
+    }
+
+    const current = { mtimeMs: file.mtimeMs, size: file.size };
+    const unchanged =
+      previous !== undefined &&
+      previous.mtimeMs === current.mtimeMs &&
+      previous.size === current.size;
+
+    if (!unchanged) {
+      previous = current;
+      stableSince = Date.now();
+    } else if (Date.now() - stableSince >= options.stableMs) {
+      return;
+    }
+
+    await wait(options.pollMs);
+  }
+
+  throw new Error(`Local media item ${context.mediaItem.id} is still changing: ${localPath}`);
+}
+
 async function writePlayerHtml(playerDir = join(tmpdir(), "caretv-player")): Promise<string> {
   await mkdir(playerDir, { recursive: true });
   const playerPath = join(playerDir, "local-player.html");
@@ -693,6 +750,10 @@ function finiteNumber(input: number | undefined): number | undefined {
 function finitePositive(input: number | undefined): number | undefined {
   const value = finiteNumber(input);
   return value && value > 0 ? value : undefined;
+}
+
+function isSupportedLocalFile(localPath: string | undefined): boolean {
+  return extname(localPath ?? "").toLowerCase() === ".mp4";
 }
 
 function localPathFor(item: MediaItem): string {

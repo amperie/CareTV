@@ -1172,9 +1172,7 @@ async function scanDirectory(directory: string, results: LocalMediaInventoryItem
 }
 
 function isSupportedMediaPath(localPath: string): boolean {
-  return [".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi"].includes(
-    extname(localPath).toLowerCase()
-  );
+  return extname(localPath).toLowerCase() === ".mp4";
 }
 
 function safeFilename(input: string): string {

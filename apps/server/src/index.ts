@@ -157,6 +157,11 @@ app.post("/api/v1/uploads", async (request, reply) => {
   const body = request.body;
   const filename = safeFilename(stringField(parseBody(request.query), "filename", "upload.bin"));
 
+  if (!isSupportedMediaPath(filename)) {
+    reply.code(400);
+    return { error: "unsupported-media-file" };
+  }
+
   if (!isReadable(body)) {
     reply.code(400);
     return { error: "upload-body-required" };
@@ -849,6 +854,11 @@ app.post("/api/v1/appliance/downloads/:id/complete", async (request, reply) => {
   if (!download || !localPath || !media.get(download.mediaItemId)) {
     reply.code(404);
     return { error: "download-not-found" };
+  }
+
+  if (!isSupportedMediaPath(localPath)) {
+    reply.code(400);
+    return { error: "unsupported-media-file" };
   }
 
   downloads.complete(download.id, now);
@@ -1544,9 +1554,7 @@ function localMediaId(applianceId: string, localPath: string): string {
 }
 
 function isSupportedMediaPath(localPath: string): boolean {
-  return [".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi"].includes(
-    extname(localPath).toLowerCase()
-  );
+  return extname(localPath).toLowerCase() === ".mp4";
 }
 
 function isPrimeUrl(input: string): boolean {

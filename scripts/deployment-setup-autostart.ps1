@@ -82,10 +82,14 @@ $startScript = if ($Mode -eq "FullStack") {
 }
 
 if ($StartupMethod -eq "ScheduledTask") {
+  & (Join-Path $PSScriptRoot "deployment-uninstall-startup-folder-launcher.ps1") `
+    -Name $taskName
   & (Join-Path $PSScriptRoot "deployment-install-appliance-logon-task.ps1") `
     -TaskName $taskName `
     -StartScript $startScript
 } else {
+  & (Join-Path $PSScriptRoot "deployment-uninstall-appliance-logon-task.ps1") `
+    -TaskName $taskName
   & (Join-Path $PSScriptRoot "deployment-install-startup-folder-launcher.ps1") `
     -Name $taskName `
     -StartScript $startScript
