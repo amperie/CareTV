@@ -269,10 +269,11 @@ async function play(queueEntry: QueueEntry): Promise<void> {
     return;
   }
 
+  const controller = new AbortController();
   const context: AdapterContext = {
     logger: console,
     mediaItem,
-    signal: new AbortController().signal,
+    signal: controller.signal,
     now: () => new Date()
   };
 
@@ -307,8 +308,13 @@ async function play(queueEntry: QueueEntry): Promise<void> {
       error instanceof Error ? error.message : "Unknown appliance error"
     );
   } finally {
+    controller.abort();
     try {
-      await adapter.cleanup(context);
+      await withTimeout(
+        adapter.cleanup(context),
+        config.values.applianceRequestTimeoutMs,
+        "adapter-cleanup-timeout"
+      );
     } catch (error) {
       console.warn(
         JSON.stringify({
@@ -832,6 +838,22 @@ function positionEvent(
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
+  });
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(message)), milliseconds);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    );
   });
 }
 
