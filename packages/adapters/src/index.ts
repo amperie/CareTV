@@ -12,6 +12,7 @@ export {
   browserPageClosedCode,
   closeLoginBrowsers,
   isBrowserPageClosedError,
+  isRecoverableBrowserPageError,
   openLoginBrowser
 } from "./browserPage.js";
 export type { LoginBrowserService } from "./browserPage.js";

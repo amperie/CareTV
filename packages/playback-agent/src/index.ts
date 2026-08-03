@@ -1,5 +1,5 @@
 import {
-  isBrowserPageClosedError,
+  isRecoverableBrowserPageError,
   type AdapterLogger,
   type PlaybackObservation,
   type StreamingAdapter
@@ -118,7 +118,7 @@ export class PlaybackAgent {
       await this.startPlayback(adapter, context);
       return true;
     } catch (error) {
-      if (!isBrowserPageClosedError(error)) {
+      if (!isRecoverableBrowserPageError(error)) {
         throw error;
       }
 
@@ -199,7 +199,7 @@ export class PlaybackAgent {
     try {
       return await adapter.observe(context);
     } catch (error) {
-      if (!isBrowserPageClosedError(error)) {
+      if (!isRecoverableBrowserPageError(error)) {
         throw error;
       }
 

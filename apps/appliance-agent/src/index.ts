@@ -14,7 +14,7 @@ import { basename, extname, isAbsolute, join, relative, resolve } from "node:pat
 
 import {
   FakeStreamingAdapter,
-  isBrowserPageClosedError,
+  isRecoverableBrowserPageError,
   LocalFileAdapter,
   openLoginBrowser,
   PrimeVideoAdapter,
@@ -45,6 +45,7 @@ let playbackSettings: PlaybackSettings = {
   fallbackEnabled: true,
   loopEnabled: false
 };
+installTimestampedConsole();
 
 interface PlaybackSettings {
   enabled: boolean;
@@ -260,7 +261,19 @@ async function pollPlaybackSettings(): Promise<PlaybackSettings | undefined> {
 
 async function play(queueEntry: QueueEntry): Promise<void> {
   playbackInProgress = true;
-  const mediaItem = await client.getMedia(queueEntry.mediaItemId);
+  let mediaItem: MediaItem | undefined;
+
+  try {
+    mediaItem = await getQueueMedia(queueEntry);
+  } catch (error) {
+    playbackInProgress = false;
+    throw error;
+  }
+
+  if (!mediaItem) {
+    playbackInProgress = false;
+    return;
+  }
 
   const adapter = adapters.find((candidate) => candidate.supports(mediaItem));
 
@@ -295,7 +308,7 @@ async function play(queueEntry: QueueEntry): Promise<void> {
 
     await monitor(queueEntry, mediaItem, adapter, context);
   } catch (error) {
-    if (isBrowserPageClosedError(error)) {
+    if (isRecoverableBrowserPageError(error)) {
       if (await recoverClosedPage(queueEntry.id, adapter, context)) {
         await monitor(queueEntry, mediaItem, adapter, context);
       }
@@ -332,6 +345,25 @@ async function play(queueEntry: QueueEntry): Promise<void> {
   }
 }
 
+async function getQueueMedia(queueEntry: QueueEntry): Promise<MediaItem | undefined> {
+  try {
+    return await client.getMedia(queueEntry.mediaItemId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Media lookup failed.";
+
+    if (message.includes(" failed with 404")) {
+      await fail(
+        queueEntry.id,
+        "media-not-found",
+        `Media item ${queueEntry.mediaItemId} was not found.`
+      );
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
 async function startWithRecovery(
   queueEntryId: string,
   streamingAdapter: StreamingAdapter,
@@ -340,7 +372,7 @@ async function startWithRecovery(
   try {
     return !(await startPlayback(queueEntryId, streamingAdapter, context));
   } catch (error) {
-    if (!isBrowserPageClosedError(error)) {
+    if (!isRecoverableBrowserPageError(error)) {
       throw error;
     }
 
@@ -450,7 +482,7 @@ async function observeWithRecovery(
   try {
     return await streamingAdapter.observe(context);
   } catch (error) {
-    if (!isBrowserPageClosedError(error)) {
+    if (!isRecoverableBrowserPageError(error)) {
       throw error;
     }
 
@@ -1131,6 +1163,50 @@ process.once("SIGTERM", () => {
   releaseApplianceLock();
   process.exit(143);
 });
+
+function installTimestampedConsole(): void {
+  for (const method of ["log", "warn", "error"] as const) {
+    const original = console[method].bind(console);
+    console[method] = (...args: unknown[]) => {
+      if (args.length === 1 && typeof args[0] === "string") {
+        original(timestampLogLine(args[0]));
+        return;
+      }
+
+      original(...args);
+    };
+  }
+}
+
+function timestampLogLine(line: string): string {
+  const now = new Date();
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return JSON.stringify({
+        time: now.toISOString(),
+        timeLocal: readableLocalTime(now),
+        ...(parsed as Record<string, unknown>)
+      });
+    }
+  } catch {
+    return `[${readableLocalTime(now)}] ${line}`;
+  }
+
+  return `[${readableLocalTime(now)}] ${line}`;
+}
+
+function readableLocalTime(now: Date): string {
+  return now.toLocaleString(undefined, {
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    month: "2-digit",
+    second: "2-digit",
+    year: "numeric"
+  });
+}
 
 function shouldQueueYouTubeFallback(code: string | undefined): boolean {
   return Boolean(

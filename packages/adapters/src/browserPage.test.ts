@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ChromeBrowser } from "./browserPage.js";
+import { ChromeBrowser, isRecoverableBrowserPageError } from "./browserPage.js";
 
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
@@ -47,6 +47,12 @@ describe("ChromeBrowser", () => {
 
     expect(second).not.toBe(first);
     expect(urls).toEqual(["https://example.test/one", "https://example.test/two"]);
+  });
+
+  it("treats CDP command timeouts as recoverable browser page errors", () => {
+    expect(isRecoverableBrowserPageError(new Error("cdp-command-timeout: Page.navigate"))).toBe(
+      true
+    );
   });
 });
 

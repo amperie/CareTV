@@ -18,6 +18,7 @@ export interface BrowserPage {
 }
 
 export const browserPageClosedCode = "browser-page-closed";
+export const cdpCommandTimeoutCode = "cdp-command-timeout";
 const cdpCommandTimeoutMs = 10_000;
 const blackPageUrl =
   "data:text/html;charset=utf-8,<!doctype html><html><head><style>html,body{background:%23000;height:100%;margin:0;overflow:hidden}</style></head><body></body></html>";
@@ -62,7 +63,7 @@ export class ChromeBrowser {
           throw error;
         }
 
-        if (isCreateTargetError(error)) {
+        if (isCreateTargetError(error) || isCdpCommandTimeoutError(error)) {
           await this.restartBrowser();
         }
       }
@@ -396,7 +397,7 @@ class CdpBrowserPage implements BrowserPage {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`cdp-command-timeout: ${method}`));
+        reject(new Error(`${cdpCommandTimeoutCode}: ${method}`));
       }, cdpCommandTimeoutMs);
       this.pending.set(id, {
         reject: (error) => {
@@ -438,6 +439,10 @@ export function isBrowserPageClosedError(error: unknown): boolean {
     (error.message.includes(browserPageClosedCode) ||
       error.message.includes("WebSocket is not open"))
   );
+}
+
+export function isRecoverableBrowserPageError(error: unknown): boolean {
+  return isBrowserPageClosedError(error) || isCdpCommandTimeoutError(error);
 }
 
 function browserPageClosedError(): Error {
@@ -536,7 +541,11 @@ function isCreateTargetError(error: unknown): boolean {
 }
 
 function isRecoverableOpenError(error: unknown): boolean {
-  return isCreateTargetError(error) || isBrowserPageClosedError(error);
+  return isCreateTargetError(error) || isRecoverableBrowserPageError(error);
+}
+
+function isCdpCommandTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(cdpCommandTimeoutCode);
 }
 
 function wait(milliseconds: number): Promise<void> {
