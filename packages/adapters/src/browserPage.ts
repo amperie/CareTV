@@ -19,6 +19,8 @@ export interface BrowserPage {
 
 export const browserPageClosedCode = "browser-page-closed";
 const cdpCommandTimeoutMs = 10_000;
+const blackPageUrl =
+  "data:text/html;charset=utf-8,<!doctype html><html><head><style>html,body{background:%23000;height:100%;margin:0;overflow:hidden}</style></head><body></body></html>";
 
 export interface ChromeBrowserOptions {
   chromePath?: string;
@@ -90,7 +92,7 @@ export class ChromeBrowser {
       "--kiosk",
       "--no-first-run",
       "--start-fullscreen",
-      "about:blank"
+      blackPageUrl
     ]);
     this.process.once("exit", () => {
       this.process = undefined;
@@ -319,7 +321,7 @@ class CdpBrowserPage implements BrowserPage {
   }
 
   public async close(): Promise<void> {
-    await this.navigate("about:blank").catch(() => undefined);
+    await this.navigate(blackPageUrl).catch(() => undefined);
     this.socket.close();
   }
 

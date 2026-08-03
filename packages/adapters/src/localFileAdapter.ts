@@ -14,6 +14,9 @@ import type {
   StreamingAdapter
 } from "./contract.js";
 
+const blackPageUrl =
+  "data:text/html;charset=utf-8,<!doctype html><html><head><style>html,body{background:%23000;height:100%;margin:0;overflow:hidden}</style></head><body></body></html>";
+
 interface LocalFileSession {
   localPath: string;
   page?: PlayerPage;
@@ -294,7 +297,7 @@ class ChromeLocalPlayerBrowser {
       "--disable-session-crashed-bubble",
       "--kiosk",
       "--no-first-run",
-      "about:blank"
+      blackPageUrl
     ]);
     this.process.once("exit", () => {
       this.process = undefined;
@@ -382,7 +385,7 @@ class CdpPlayerPage implements PlayerPage {
   }
 
   public async close(): Promise<void> {
-    await this.navigate("about:blank").catch(() => undefined);
+    await this.navigate(blackPageUrl).catch(() => undefined);
     this.socket.close();
   }
 
