@@ -41,9 +41,9 @@ let backgroundHeartbeatInFlight = false;
 let playbackInProgress = false;
 const fullscreenCheckMs = 10_000;
 let playbackSettings: PlaybackSettings = {
-  enabled: false,
+  enabled: true,
   fallbackEnabled: true,
-  loopEnabled: false
+  loopEnabled: true
 };
 installTimestampedConsole();
 

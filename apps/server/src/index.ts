@@ -1015,7 +1015,7 @@ app.post("/api/v1/appliance/playback/complete-run", () => {
       return playback;
     }
 
-    return setPlaybackSettings({ enabled: false });
+    return playback.loopEnabled ? playback : setPlaybackSettings({ enabled: false });
   }
 
   return playback;
@@ -1064,6 +1064,7 @@ app.post("/api/v1/appliance/events", (request, reply) => {
 });
 
 try {
+  enablePlaybackOnStartup();
   app.log.info({ config: config.redacted }, "Loaded CareTV configuration");
   await app.listen({ host: config.values.host, port: config.values.serverPort });
 } catch (error) {
@@ -1272,9 +1273,9 @@ interface PlaybackSettings {
 function playbackSettings(): PlaybackSettings {
   const stored = settings.get("playback") ?? {};
   return {
-    enabled: booleanField(stored, "enabled", false),
+    enabled: booleanField(stored, "enabled", true),
     fallbackEnabled: booleanField(stored, "fallbackEnabled", true),
-    loopEnabled: booleanField(stored, "loopEnabled", false)
+    loopEnabled: booleanField(stored, "loopEnabled", true)
   };
 }
 
@@ -1282,6 +1283,10 @@ function setPlaybackSettings(patch: Partial<PlaybackSettings>): PlaybackSettings
   const next = { ...playbackSettings(), ...patch };
   settings.set("playback", next, new Date().toISOString());
   return next;
+}
+
+function enablePlaybackOnStartup(): PlaybackSettings {
+  return setPlaybackSettings({ enabled: true, loopEnabled: true });
 }
 
 function isRunnableQueueStatus(status: QueueEntryStatus): boolean {
