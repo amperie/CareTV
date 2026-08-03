@@ -49,7 +49,7 @@ const playlists = new PlaylistRepository(db);
 const settings = new SettingsRepository(db);
 
 const maxUploadBytes = 50 * 1024 * 1024 * 1024;
-const app = Fastify({ bodyLimit: maxUploadBytes, logger: true });
+const app = Fastify({ bodyLimit: maxUploadBytes, logger: { level: "warn" } });
 const uploadDir = join(config.values.runtimeDir, "uploads");
 const youtubeFallbackSettingKey = "youtubeFallbackPlaylist";
 
@@ -1065,7 +1065,7 @@ app.post("/api/v1/appliance/events", (request, reply) => {
 
 try {
   enablePlaybackOnStartup();
-  app.log.info({ config: config.redacted }, "Loaded CareTV configuration");
+  app.log.warn({ config: config.redacted }, "Loaded CareTV configuration");
   await app.listen({ host: config.values.host, port: config.values.serverPort });
 } catch (error) {
   app.log.error(error);
