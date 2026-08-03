@@ -58,7 +58,7 @@ export class QueueRepository {
           `
             SELECT * FROM queue_entries
             WHERE status = 'queued'
-            ORDER BY priority DESC, position ASC
+            ORDER BY position ASC
             LIMIT 1
           `
         )
@@ -193,6 +193,7 @@ export class QueueRepository {
         `
           UPDATE queue_entries
           SET status = 'queued',
+              priority = 0,
               started_at = NULL,
               completed_at = NULL,
               last_error_code = NULL,
@@ -211,6 +212,7 @@ export class QueueRepository {
         `
           UPDATE queue_entries
           SET status = 'queued',
+              priority = 0,
               started_at = NULL,
               completed_at = NULL,
               last_error_code = NULL,
@@ -306,25 +308,52 @@ export class QueueRepository {
       return false;
     }
 
-    const row = this.db
-      .prepare("SELECT COALESCE(MAX(priority), 0) + 1 AS priority FROM queue_entries")
-      .get() as { priority: number } | undefined;
-    const result = this.db
+    const queued = this.db
       .prepare(
-        `
-          UPDATE queue_entries
-          SET status = 'queued',
-              priority = ?,
-              started_at = NULL,
-              completed_at = NULL,
-              last_error_code = NULL,
-              last_error_message = NULL
-          WHERE id = ?
-        `
+        "SELECT * FROM queue_entries WHERE status = 'queued' AND id != ? ORDER BY position ASC"
       )
-      .run(row?.priority ?? 1, id);
+      .all(id) as unknown as QueueRow[];
+    const startPosition =
+      current.status === "queued"
+        ? Math.min(current.position, queued[0]?.position ?? current.position)
+        : (queued[0]?.position ?? current.position);
 
-    return Number(result.changes) > 0;
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const [index, row] of queued.entries()) {
+        this.db
+          .prepare("UPDATE queue_entries SET position = ? WHERE id = ?")
+          .run(-index - 1, row.id);
+      }
+
+      this.db
+        .prepare(
+          `
+            UPDATE queue_entries
+            SET status = 'queued',
+                priority = 0,
+                position = ?,
+                started_at = NULL,
+                completed_at = NULL,
+                last_error_code = NULL,
+                last_error_message = NULL
+            WHERE id = ?
+          `
+        )
+        .run(startPosition, id);
+
+      for (const [index, row] of queued.entries()) {
+        this.db
+          .prepare("UPDATE queue_entries SET priority = 0, position = ? WHERE id = ?")
+          .run(startPosition + index + 1, row.id);
+      }
+
+      this.db.exec("COMMIT;");
+      return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   public reconcileStaleActive(
@@ -378,7 +407,7 @@ export class QueueRepository {
 
   public listPlaybackOrder(): QueueEntry[] {
     const rows = this.db
-      .prepare("SELECT * FROM queue_entries ORDER BY priority DESC, position ASC, started_at ASC")
+      .prepare("SELECT * FROM queue_entries ORDER BY position ASC, started_at ASC")
       .all() as unknown as QueueRow[];
 
     return rows.map(mapQueueRow);

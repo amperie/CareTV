@@ -178,7 +178,7 @@ describe("database repositories", () => {
     });
   });
 
-  it("can list entries in playback selection order", () => {
+  it("uses visible position order for playback selection", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);
       const queue = new QueueRepository(db);
@@ -190,10 +190,11 @@ describe("database repositories", () => {
 
       expect(queue.list().map((entry) => entry.id)).toEqual(["first", "promoted", "middle"]);
       expect(queue.listPlaybackOrder().map((entry) => entry.id)).toEqual([
+        "first",
         "promoted",
-        "middle",
-        "first"
+        "middle"
       ]);
+      expect(queue.selectNextQueued(now)?.id).toBe("first");
     });
   });
 
@@ -360,9 +361,18 @@ describe("database repositories", () => {
       queue.enqueue({ ...fakeQueueEntry("done", "media-1", 3), status: "completed" });
 
       expect(queue.promoteToNext("second")).toBe(true);
+      expect(queue.listPlaybackOrder()).toMatchObject([
+        { id: "second", position: 1, priority: 0, status: "queued" },
+        { id: "first", position: 2, priority: 0, status: "queued" },
+        { id: "done", position: 3, status: "completed" }
+      ]);
       expect(queue.selectNextQueued(now)?.id).toBe("second");
       expect(queue.promoteToNext("done")).toBe(true);
-      expect(queue.get("done")).toMatchObject({ status: "queued" });
+      expect(queue.listPlaybackOrder()).toMatchObject([
+        { id: "second", position: 1, status: "starting" },
+        { id: "done", position: 2, priority: 0, status: "queued" },
+        { id: "first", position: 3, priority: 0, status: "queued" }
+      ]);
     });
   });
 
