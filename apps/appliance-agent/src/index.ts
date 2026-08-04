@@ -22,7 +22,7 @@ import {
 } from "@caretv/adapters";
 import type { AdapterContext, PlaybackObservation, StreamingAdapter } from "@caretv/adapters";
 import { loadConfig } from "@caretv/config";
-import type { MediaItem, PlaybackCommand, PlaybackState, QueueEntry } from "@caretv/core";
+import type { MediaItem, PlaybackCommand, PlaybackEvent, PlaybackState, QueueEntry } from "@caretv/core";
 import { createIdleState, transition } from "@caretv/state-machine";
 import type { PlaybackStateEvent } from "@caretv/state-machine";
 
@@ -372,6 +372,15 @@ async function startWithRecovery(
   try {
     return !(await startPlayback(queueEntryId, streamingAdapter, context));
   } catch (error) {
+    if (isStartupBrowserControlTimeout(error)) {
+      await fail(
+        queueEntryId,
+        `${streamingAdapter.id}-startup-control-timeout`,
+        error instanceof Error ? error.message : "Browser control timed out during startup."
+      );
+      return false;
+    }
+
     if (!isRecoverableBrowserPageError(error)) {
       throw error;
     }
@@ -818,6 +827,10 @@ async function apply(event: PlaybackStateEvent): Promise<void> {
     now: () => new Date()
   });
   state = result.state;
+  if (isRedundantBufferingEvent(result.event)) {
+    return;
+  }
+
   await client.appendEvent(result.event).catch((error) =>
     console.warn(
       JSON.stringify({
@@ -829,6 +842,13 @@ async function apply(event: PlaybackStateEvent): Promise<void> {
   );
 }
 
+function isRedundantBufferingEvent(event: PlaybackEvent): boolean {
+  return (
+    event.type === "BUFFERING" &&
+    event.details?.from === "buffering" &&
+    event.details?.to === "buffering"
+  );
+}
 function canApplyCommand(command: PlaybackCommand, phase: PlaybackState["phase"]): boolean {
   switch (command.type) {
     case "pause":
@@ -857,6 +877,13 @@ function isTerminalStartupObservation(observation: PlaybackObservation): boolean
   );
 }
 
+function isStartupBrowserControlTimeout(error: unknown): boolean {
+  return (
+    state.phase === "loading" &&
+    error instanceof Error &&
+    error.message.includes("cdp-command-timeout: Runtime.evaluate")
+  );
+}
 function positionEvent(
   type: "HEARTBEAT" | "PAUSED" | "COMPLETED",
   positionSeconds: number | undefined
