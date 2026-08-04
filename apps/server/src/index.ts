@@ -76,12 +76,17 @@ app.get("/health", () => createHealthStatus("server"));
 app.get("/api/v1/media", () => media.list());
 app.get("/api/v1/downloads", () => downloads.listPending());
 app.get("/api/v1/playlists", () => playlists.list());
-app.get("/api/v1/queue", () => queue.listPlaybackOrder());
+app.get("/api/v1/queue", () => {
+  clearStaleStartingQueueEntries();
+  recoverRunnableQueue();
+  return queue.listPlaybackOrder();
+});
 app.get("/api/v1/appliances", () => appliances.list(new Date()));
 app.get("/api/v1/playback/status", () => {
   clearStaleStartingQueueEntries();
-  const appliance = appliances.latest(new Date());
   const playback = playbackSettings();
+  recoverRunnableQueue(playback);
+  const appliance = appliances.latest(new Date());
   return {
     appliance,
     events: events.listRecent(25),
@@ -650,11 +655,9 @@ app.post("/api/v1/appliance/fallback/youtube", (request, reply) => {
 });
 
 app.post("/api/v1/playback/start", () => {
-  if (queue.runnableCount() === 0) {
-    queue.requeueCompletedEntries();
-  }
-
-  return setPlaybackSettings({ enabled: true });
+  const playback = setPlaybackSettings({ enabled: true });
+  recoverRunnableQueue(playback);
+  return playback;
 });
 app.post("/api/v1/playback/stop", () => {
   const status = setPlaybackSettings({ enabled: false });
@@ -729,6 +732,7 @@ app.post("/api/v1/appliance/heartbeat", (request) => {
   const body = parseBody(request.body);
   const state = playbackStateField(body.state);
   reconcileQueueWithApplianceState(state);
+  recoverRunnableQueue();
   appliances.heartbeat(
     stringField(body, "applianceId", config.values.applianceId),
     stringField(body, "name", config.values.applianceName),
@@ -906,16 +910,7 @@ app.post("/api/v1/appliance/queue/next", () => {
     return active;
   }
 
-  const next = queue.selectNextQueued(now);
-
-  if (next || !playbackSettings().loopEnabled || queue.runnableCount() > 0) {
-    return next ?? null;
-  }
-
-  if (queue.requeueCompletedEntries() === 0) {
-    return null;
-  }
-
+  recoverRunnableQueue();
   return queue.selectNextQueued(now) ?? null;
 });
 app.post("/api/v1/appliance/queue", (request, reply) => {
@@ -1011,7 +1006,7 @@ app.post("/api/v1/appliance/playback/complete-run", () => {
   const playback = playbackSettings();
 
   if (queue.runnableCount() === 0) {
-    if (playback.loopEnabled && queue.requeueCompletedEntries() > 0) {
+    if (recoverRunnableQueue(playback) > 0) {
       return playback;
     }
 
@@ -1286,7 +1281,33 @@ function setPlaybackSettings(patch: Partial<PlaybackSettings>): PlaybackSettings
 }
 
 function enablePlaybackOnStartup(): PlaybackSettings {
-  return setPlaybackSettings({ enabled: true, loopEnabled: true });
+  const playback = setPlaybackSettings({ enabled: true, loopEnabled: true });
+  recoverRunnableQueue(playback);
+  return playback;
+}
+
+function recoverRunnableQueue(playback = playbackSettings()): number {
+  if (!playback.enabled || queue.runnableCount() > 0) {
+    return 0;
+  }
+
+  const recovered = queue.requeueRecoverableFailures();
+
+  if (recovered > 0) {
+    app.log.warn({ requeued: recovered }, "Requeued recoverable failed queue entries");
+  }
+
+  if (queue.runnableCount() > 0 || !playback.loopEnabled) {
+    return recovered;
+  }
+
+  const looped = queue.requeueCompletedEntries();
+
+  if (looped > 0) {
+    app.log.warn({ requeued: looped }, "Requeued terminal queue entries for looped playback");
+  }
+
+  return recovered + looped;
 }
 
 function isRunnableQueueStatus(status: QueueEntryStatus): boolean {

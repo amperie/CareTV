@@ -361,6 +361,37 @@ describe("database repositories", () => {
     });
   });
 
+  it("requeues recoverable failures regardless of attempt count", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("outage", "media-1", 1),
+        status: "failed",
+        completedAt: now,
+        attemptCount: 6,
+        lastErrorCode: "browser-recovery-failed",
+        lastErrorMessage: "cdp-command-timeout: Page.navigate"
+      });
+      queue.enqueue({
+        ...fakeQueueEntry("private", "media-1", 2),
+        status: "failed",
+        completedAt: now,
+        attemptCount: 1,
+        lastErrorCode: "youtube-private"
+      });
+
+      expect(queue.requeueRecoverableFailures()).toBe(1);
+      expect(queue.list()).toMatchObject([
+        { id: "outage", status: "queued", position: 1 },
+        { id: "private", status: "failed", position: 2, lastErrorCode: "youtube-private" }
+      ]);
+      expect(queue.get("outage")?.lastErrorCode).toBeUndefined();
+    });
+  });
+
   it("moves queued entries within the queued subset", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

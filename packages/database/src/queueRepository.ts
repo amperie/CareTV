@@ -251,6 +251,40 @@ export class QueueRepository {
     return Number(result.changes);
   }
 
+  public requeueRecoverableFailures(): number {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET status = 'queued',
+              priority = 0,
+              started_at = NULL,
+              completed_at = NULL,
+              last_error_code = NULL,
+              last_error_message = NULL
+          WHERE status = 'failed'
+            AND (
+              last_error_code IN (
+                'agent-error',
+                'appliance-failed',
+                'browser-recovery-failed',
+                'internet-unavailable',
+                'prime-startup-control-timeout',
+                'youtube-buffering-timeout',
+                'youtube-startup-control-timeout'
+              )
+              OR last_error_message LIKE '%cdp-command-timeout:%'
+              OR last_error_message LIKE '%fetch failed%'
+              OR last_error_message LIKE '%operation was aborted%'
+              OR last_error_message LIKE '%browser-page-closed%'
+            )
+        `
+      )
+      .run();
+
+    return Number(result.changes);
+  }
+
   public clearCompleted(): number {
     const ids = this.db
       .prepare(
