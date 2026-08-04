@@ -105,13 +105,20 @@ export class QueueRepository {
         `
           UPDATE queue_entries
           SET status = ?,
-              completed_at = COALESCE(?, completed_at),
+              started_at = CASE
+                WHEN ? = 'queued' THEN NULL
+                ELSE started_at
+              END,
+              completed_at = CASE
+                WHEN ? = 'queued' THEN NULL
+                ELSE COALESCE(?, completed_at)
+              END,
               last_error_code = CASE
-                WHEN ? IN ('completed', 'skipped') THEN NULL
+                WHEN ? IN ('queued', 'completed', 'skipped') THEN NULL
                 ELSE COALESCE(?, last_error_code)
               END,
               last_error_message = CASE
-                WHEN ? IN ('completed', 'skipped') THEN NULL
+                WHEN ? IN ('queued', 'completed', 'skipped') THEN NULL
                 ELSE COALESCE(?, last_error_message)
               END,
               attempt_count = CASE
@@ -122,6 +129,8 @@ export class QueueRepository {
         `
       )
       .run(
+        status,
+        status,
         status,
         fields.completedAt ?? null,
         status,

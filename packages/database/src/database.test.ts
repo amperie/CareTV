@@ -222,6 +222,36 @@ describe("database repositories", () => {
     });
   });
 
+  it("resets active queue state when deferred back to queued", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("active", "media-1", 1),
+        lastErrorCode: "previous-error",
+        lastErrorMessage: "Previous error",
+        startedAt: now,
+        status: "playing"
+      });
+
+      expect(
+        queue.updateStatus("active", "queued", {
+          lastErrorCode: "internet-unavailable",
+          lastErrorMessage: "Internet unavailable"
+        })
+      ).toBe(true);
+      expect(queue.get("active")).toMatchObject({
+        attemptCount: 0,
+        status: "queued"
+      });
+      expect(queue.get("active")?.startedAt).toBeUndefined();
+      expect(queue.get("active")?.lastErrorCode).toBeUndefined();
+      expect(queue.runnableCount()).toBe(1);
+    });
+  });
+
   it("requeues terminal entries without creating duplicates", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

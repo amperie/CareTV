@@ -39,7 +39,9 @@ let nextHeartbeatAt = 0;
 let nextMediaScanAt = 0;
 let backgroundHeartbeatInFlight = false;
 let playbackInProgress = false;
+let internetUnavailableUntil = 0;
 const fullscreenCheckMs = 10_000;
+const internetRetryMs = 5 * 60_000;
 let playbackSettings: PlaybackSettings = {
   enabled: true,
   fallbackEnabled: true,
@@ -279,6 +281,17 @@ async function play(queueEntry: QueueEntry): Promise<void> {
 
   if (!adapter) {
     await fail(queueEntry.id, "adapter-not-found", `No adapter supports ${mediaItem.service}.`);
+    return;
+  }
+
+  if (await shouldDeferForInternetOutage(mediaItem)) {
+    await deferQueueEntry(
+      queueEntry.id,
+      "internet-unavailable",
+      "Public internet is unavailable; deferring streaming playback."
+    );
+    playbackInProgress = false;
+    await sleep(Math.min(internetRetryMs, Math.max(config.values.appliancePollMs, 30_000)));
     return;
   }
 
@@ -722,6 +735,17 @@ async function reportQueueStatus(
     });
 }
 
+async function deferQueueEntry(queueEntryId: string, code: string, message: string): Promise<void> {
+  pendingQueueReports.delete(queueEntryId);
+  await reportQueueStatus(queueEntryId, "queued", {
+    lastErrorCode: code,
+    lastErrorMessage: message
+  });
+  if (state.phase !== "idle") {
+    await apply({ type: "STOPPED" });
+  }
+}
+
 async function flushPendingQueueReports(): Promise<void> {
   for (const [queueEntryId, report] of pendingQueueReports) {
     try {
@@ -758,6 +782,54 @@ async function flushPendingQueueReports(): Promise<void> {
 
 function isConflictResponseError(error: unknown): boolean {
   return error instanceof Error && error.message.includes(" failed with 409");
+}
+
+async function shouldDeferForInternetOutage(mediaItem: MediaItem): Promise<boolean> {
+  if (!requiresPublicInternet(mediaItem)) {
+    return false;
+  }
+
+  const now = Date.now();
+  if (now < internetUnavailableUntil) {
+    return true;
+  }
+
+  if (await publicInternetReachable()) {
+    internetUnavailableUntil = 0;
+    return false;
+  }
+
+  internetUnavailableUntil = now + internetRetryMs;
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      message: "Public internet unavailable; streaming playback deferred.",
+      mediaItemId: mediaItem.id,
+      title: mediaItem.title,
+      retryAfterSeconds: Math.round(internetRetryMs / 1000)
+    })
+  );
+  return true;
+}
+
+function requiresPublicInternet(mediaItem: MediaItem): boolean {
+  return mediaItem.service === "youtube" || mediaItem.service === "prime";
+}
+
+async function publicInternetReachable(): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch("https://www.youtube.com/generate_204", {
+      cache: "no-store",
+      signal: controller.signal
+    });
+    return response.ok || response.status === 204;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function reportCommandStatus(
