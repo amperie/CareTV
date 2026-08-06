@@ -269,6 +269,7 @@ export class QueueRepository {
                 'appliance-failed',
                 'browser-recovery-failed',
                 'internet-unavailable',
+                'observation-limit',
                 'prime-startup-control-timeout',
                 'youtube-buffering-timeout',
                 'youtube-startup-control-timeout'

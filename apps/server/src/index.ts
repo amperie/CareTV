@@ -1287,7 +1287,7 @@ function enablePlaybackOnStartup(): PlaybackSettings {
 }
 
 function recoverRunnableQueue(playback = playbackSettings()): number {
-  if (!playback.enabled || queue.runnableCount() > 0) {
+  if (!playback.enabled) {
     return 0;
   }
 

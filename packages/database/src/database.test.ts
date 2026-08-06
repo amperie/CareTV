@@ -376,17 +376,26 @@ describe("database repositories", () => {
         lastErrorMessage: "cdp-command-timeout: Page.navigate"
       });
       queue.enqueue({
-        ...fakeQueueEntry("private", "media-1", 2),
+        ...fakeQueueEntry("observation-limit", "media-1", 2),
+        status: "failed",
+        completedAt: now,
+        attemptCount: 4,
+        lastErrorCode: "observation-limit",
+        lastErrorMessage: "Playback did not finish: Test"
+      });
+      queue.enqueue({
+        ...fakeQueueEntry("private", "media-1", 3),
         status: "failed",
         completedAt: now,
         attemptCount: 1,
         lastErrorCode: "youtube-private"
       });
 
-      expect(queue.requeueRecoverableFailures()).toBe(1);
+      expect(queue.requeueRecoverableFailures()).toBe(2);
       expect(queue.list()).toMatchObject([
         { id: "outage", status: "queued", position: 1 },
-        { id: "private", status: "failed", position: 2, lastErrorCode: "youtube-private" }
+        { id: "observation-limit", status: "queued", position: 2 },
+        { id: "private", status: "failed", position: 3, lastErrorCode: "youtube-private" }
       ]);
       expect(queue.get("outage")?.lastErrorCode).toBeUndefined();
     });

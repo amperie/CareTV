@@ -42,6 +42,7 @@ let playbackInProgress = false;
 let internetUnavailableUntil = 0;
 const fullscreenCheckMs = 10_000;
 const internetRetryMs = 5 * 60_000;
+const serverRetryMs = 5_000;
 let playbackSettings: PlaybackSettings = {
   enabled: true,
   fallbackEnabled: true,
@@ -60,9 +61,18 @@ interface PendingQueueReport {
   status: QueueEntry["status"];
 }
 
+interface DurableOutbox {
+  events?: PlaybackEvent[];
+  queueReports?: Record<string, PendingQueueReport>;
+}
+
+const durableOutboxPath = join(config.values.runtimeDir, `${config.values.applianceId}-outbox.json`);
+const maxPendingPlaybackEvents = 500;
 const pendingQueueReports = new Map<string, PendingQueueReport>();
+const pendingPlaybackEvents: PlaybackEvent[] = [];
 
 async function main(): Promise<void> {
+  loadDurableOutbox();
   console.log(
     JSON.stringify({
       applianceId: config.values.applianceId,
@@ -80,16 +90,25 @@ async function main(): Promise<void> {
 
   for (;;) {
     try {
-      await mediaMaintenance();
-      await applyLoginCommands();
+      if (!(await runControlPlaneTask("Media maintenance", mediaMaintenance))) {
+        await sleep(Math.max(config.values.appliancePollMs, serverRetryMs));
+        continue;
+      }
+
+      if (!(await runControlPlaneTask("Login command polling", applyLoginCommands))) {
+        await sleep(Math.max(config.values.appliancePollMs, serverRetryMs));
+        continue;
+      }
+
       const playback = await pollPlaybackSettings();
 
       if (!playback) {
-        await sleep(config.values.appliancePollMs);
+        await sleep(Math.max(config.values.appliancePollMs, serverRetryMs));
         continue;
       }
 
       await flushPendingQueueReports();
+      await flushPendingPlaybackEvents();
 
       if (!playback.enabled) {
         await sleep(config.values.appliancePollMs);
@@ -121,6 +140,22 @@ async function main(): Promise<void> {
       );
       await sleep(config.values.appliancePollMs);
     }
+  }
+}
+
+async function runControlPlaneTask(name: string, task: () => Promise<void>): Promise<boolean> {
+  try {
+    await task();
+    return true;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: `${name} failed; server unavailable or control-plane request failed.`,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+    return false;
   }
 }
 
@@ -722,6 +757,7 @@ async function reportQueueStatus(
       }
 
       pendingQueueReports.set(queueEntryId, { fields, status });
+      persistDurableOutbox();
       console.warn(
         JSON.stringify({
           level: "warn",
@@ -737,6 +773,7 @@ async function reportQueueStatus(
 
 async function deferQueueEntry(queueEntryId: string, code: string, message: string): Promise<void> {
   pendingQueueReports.delete(queueEntryId);
+  persistDurableOutbox();
   await reportQueueStatus(queueEntryId, "queued", {
     lastErrorCode: code,
     lastErrorMessage: message
@@ -751,9 +788,11 @@ async function flushPendingQueueReports(): Promise<void> {
     try {
       await client.updateQueueStatus(queueEntryId, report.status, report.fields);
       pendingQueueReports.delete(queueEntryId);
+      persistDurableOutbox();
     } catch (error) {
       if (isConflictResponseError(error)) {
         pendingQueueReports.delete(queueEntryId);
+        persistDurableOutbox();
         console.warn(
           JSON.stringify({
             level: "warn",
@@ -777,6 +816,102 @@ async function flushPendingQueueReports(): Promise<void> {
       );
       return;
     }
+  }
+}
+
+async function flushPendingPlaybackEvents(): Promise<void> {
+  while (pendingPlaybackEvents.length > 0) {
+    const event = pendingPlaybackEvents[0]!;
+
+    try {
+      await client.appendEvent(event);
+      pendingPlaybackEvents.shift();
+      persistDurableOutbox();
+    } catch (error) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          message: "Pending playback event update failed.",
+          eventId: event.id,
+          type: event.type,
+          error: error instanceof Error ? error.message : "Unknown error"
+        })
+      );
+      return;
+    }
+  }
+}
+
+function queuePendingPlaybackEvent(event: PlaybackEvent): void {
+  if (!isDurablePlaybackEvent(event)) {
+    return;
+  }
+
+  pendingPlaybackEvents.push(event);
+  if (pendingPlaybackEvents.length > maxPendingPlaybackEvents) {
+    pendingPlaybackEvents.splice(0, pendingPlaybackEvents.length - maxPendingPlaybackEvents);
+  }
+  persistDurableOutbox();
+}
+
+function isDurablePlaybackEvent(event: PlaybackEvent): boolean {
+  return event.type !== "HEARTBEAT" && event.type !== "PLAYING";
+}
+
+function loadDurableOutbox(): void {
+  if (!existsSync(durableOutboxPath)) {
+    return;
+  }
+
+  try {
+    const outbox = JSON.parse(readFileSync(durableOutboxPath, "utf8")) as DurableOutbox;
+
+    for (const [queueEntryId, report] of Object.entries(outbox.queueReports ?? {})) {
+      pendingQueueReports.set(queueEntryId, report);
+    }
+
+    pendingPlaybackEvents.push(...(outbox.events ?? []).slice(-maxPendingPlaybackEvents));
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Durable appliance outbox could not be loaded.",
+        path: durableOutboxPath,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+  }
+}
+
+function persistDurableOutbox(): void {
+  try {
+    if (pendingQueueReports.size === 0 && pendingPlaybackEvents.length === 0) {
+      if (existsSync(durableOutboxPath)) {
+        unlinkSync(durableOutboxPath);
+      }
+      return;
+    }
+
+    writeFileSync(
+      durableOutboxPath,
+      JSON.stringify(
+        {
+          events: pendingPlaybackEvents,
+          queueReports: Object.fromEntries(pendingQueueReports)
+        } satisfies DurableOutbox,
+        null,
+        2
+      )
+    );
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Durable appliance outbox could not be saved.",
+        path: durableOutboxPath,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
   }
 }
 
@@ -903,15 +1038,17 @@ async function apply(event: PlaybackStateEvent): Promise<void> {
     return;
   }
 
-  await client.appendEvent(result.event).catch((error) =>
+  await client.appendEvent(result.event).catch((error) => {
+    queuePendingPlaybackEvent(result.event);
     console.warn(
       JSON.stringify({
         level: "warn",
-        message: "Playback event reporting failed.",
+        message: "Playback event reporting failed; queued for retry.",
+        pendingEvents: pendingPlaybackEvents.length,
         error: error instanceof Error ? error.message : "Unknown error"
       })
-    )
-  );
+    );
+  });
 }
 
 function isRedundantBufferingEvent(event: PlaybackEvent): boolean {
