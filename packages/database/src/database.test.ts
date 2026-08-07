@@ -457,6 +457,26 @@ describe("database repositories", () => {
     });
   });
 
+  it("rotates queued entries when random shuffle returns the same order", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue(fakeQueueEntry("first", "media-1", 1));
+      queue.enqueue(fakeQueueEntry("second", "media-1", 2));
+
+      const random = vi.spyOn(Math, "random");
+      random.mockReturnValueOnce(0.9);
+
+      try {
+        expect(queue.shuffleQueued().map((entry) => entry.id)).toEqual(["second", "first"]);
+      } finally {
+        random.mockRestore();
+      }
+    });
+  });
+
   it("promotes queued and completed entries to play next", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

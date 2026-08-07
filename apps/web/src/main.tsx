@@ -135,6 +135,7 @@ interface Playlist {
   id: string;
   name: string;
   items: { mediaItemId: string; position: number }[];
+  updatedAt: string;
 }
 
 interface FallbackResponse {
@@ -253,7 +254,7 @@ function App() {
     }
 
     try {
-      await post(path, { url: streamingUrl });
+      await apiPost(path, { url: streamingUrl });
       setStreamingUrl("");
     } catch {
       setQueueMessage("That streaming URL could not be added.");
@@ -264,7 +265,7 @@ function App() {
   async function openLogin(service: "prime" | "youtube") {
     setQueueMessage("");
     try {
-      await post(`/login/${service}`, {});
+      await apiPost(`/login/${service}`, {});
       setQueueMessage(`Opened ${serviceLabel(service)} login on the appliance.`);
     } catch {
       setQueueMessage(`Could not open ${serviceLabel(service)} login.`);
@@ -292,7 +293,7 @@ function App() {
   async function enqueueMedia(mediaItemId: string) {
     setQueueMessage("");
     try {
-      await post("/queue", { mediaItemId });
+      await apiPost("/queue", { mediaItemId });
       setQueueMessage("Item added to queue.");
     } catch {
       setQueueMessage("That item could not be queued.");
@@ -320,13 +321,16 @@ function App() {
 
     const body = { mediaItemIds: playlistMediaIds, name: playlistName };
     try {
+      const saved = editingPlaylistId
+        ? await postJson<Playlist>(`/playlists/${editingPlaylistId}`, body, "PUT")
+        : await postJson<Playlist>("/playlists", body);
+      upsertPlaylist(saved);
       if (editingPlaylistId) {
-        await post(`/playlists/${editingPlaylistId}`, body, "PUT");
+        setQueueMessage("Playlist updated.");
       } else {
-        await post("/playlists", body);
+        setQueueMessage("Playlist saved.");
       }
       clearPlaylistBuilder();
-      setQueueMessage("Playlist saved.");
     } catch {
       setQueueMessage("Playlist could not be saved.");
     }
@@ -336,7 +340,7 @@ function App() {
   async function queuePlaylist(id: string) {
     setQueueMessage("");
     try {
-      await post(`/playlists/${id}/queue`, {});
+      await apiPost(`/playlists/${id}/queue`, {});
       setQueueMessage("Playlist added to queue.");
     } catch {
       setQueueMessage("That playlist has no available media.");
@@ -368,6 +372,14 @@ function App() {
     setEditingPlaylistId(undefined);
     setPlaylistName("New playlist");
     setPlaylistMediaIds([]);
+  }
+
+  function upsertPlaylist(playlist: Playlist): void {
+    setPlaylists((current) => {
+      const next = [playlist, ...current.filter((candidate) => candidate.id !== playlist.id)];
+      saveCachedArray(playlistCacheKey, next);
+      return next;
+    });
   }
 
   function setFallbackDraft(items: FallbackQueueItem[], dirty = true) {
@@ -422,7 +434,7 @@ function App() {
   async function saveFallbackQueue() {
     setFallbackMessage("");
     try {
-      await post(
+      await apiPost(
         "/fallback/youtube",
         {
           items: fallbackItems.map((item) => ({
@@ -452,7 +464,7 @@ function App() {
   async function startPlayback() {
     setQueueMessage("");
     try {
-      await post("/playback/start", {});
+      await apiPost("/playback/start", {});
       setQueueMessage("Playback start requested.");
     } catch {
       setQueueMessage("Playback could not be started.");
@@ -463,7 +475,7 @@ function App() {
   async function stopPlayback() {
     setQueueMessage("");
     try {
-      await post("/playback/stop", {});
+      await apiPost("/playback/stop", {});
       setQueueMessage("Playback stop requested.");
     } catch {
       setQueueMessage("Playback could not be stopped.");
@@ -474,7 +486,7 @@ function App() {
   async function resetLab() {
     setQueueMessage("");
     try {
-      await post("/lab/reset", {});
+      await apiPost("/lab/reset", {});
       setQueueMessage("Playback state and queue were reset.");
     } catch {
       setQueueMessage("Reset failed.");
@@ -485,7 +497,7 @@ function App() {
   async function sendCommand(type: "pause" | "restart" | "resume" | "skip") {
     setQueueMessage("");
     try {
-      await post("/commands", { type });
+      await apiPost("/commands", { type });
       setQueueMessage(`${commandLabel(type)} requested.`);
     } catch {
       setQueueMessage(`Could not send ${commandLabel(type).toLowerCase()}.`);
@@ -496,7 +508,7 @@ function App() {
   async function toggleLoop() {
     setQueueMessage("");
     try {
-      await post("/playback/loop", { enabled: !status?.loopEnabled });
+      await apiPost("/playback/loop", { enabled: !status?.loopEnabled });
       setQueueMessage(`Loop ${status?.loopEnabled ? "disabled" : "enabled"}.`);
     } catch {
       setQueueMessage("Loop setting could not be changed.");
@@ -507,7 +519,7 @@ function App() {
   async function toggleFallback() {
     setFallbackMessage("");
     try {
-      await post("/playback/fallback", { enabled: !status?.fallbackEnabled });
+      await apiPost("/playback/fallback", { enabled: !status?.fallbackEnabled });
       setFallbackMessage(`Fallback queue ${status?.fallbackEnabled ? "disabled" : "enabled"}.`);
     } catch {
       setFallbackMessage("Fallback setting could not be changed.");
@@ -529,7 +541,7 @@ function App() {
   async function playQueueEntry(id: string) {
     setQueueMessage("");
     try {
-      await post(`/queue/${id}/play`, {});
+      await apiPost(`/queue/${id}/play`, {});
       setQueueMessage("Selected item will play next.");
     } catch {
       setQueueMessage("That item cannot be played right now.");
@@ -541,7 +553,7 @@ function App() {
     setQueueMessage("");
 
     try {
-      await post(`/queue/${id}/move`, { direction });
+      await apiPost(`/queue/${id}/move`, { direction });
       setStatus((current) => (current ? moveQueueInStatus(current, id, direction) : current));
       setQueueMessage("Queue reordered.");
       await refresh();
@@ -555,7 +567,8 @@ function App() {
     setQueueMessage("");
 
     try {
-      await post("/queue/shuffle", {});
+      const result = await apiPost<{ queue: QueueEntry[] }>("/queue/shuffle", {});
+      setStatus((current) => (current ? { ...current, queue: result.queue } : current));
       setQueueMessage("Queue randomized.");
     } catch {
       setQueueMessage("Queue could not be randomized.");
@@ -566,7 +579,7 @@ function App() {
   async function clearCompleted() {
     setQueueMessage("");
     try {
-      await post("/queue/clear-completed", {});
+      await apiPost("/queue/clear-completed", {});
       setQueueMessage("Completed, failed, skipped, and cancelled items were cleared.");
     } catch {
       setQueueMessage("Completed items could not be cleared.");
@@ -577,7 +590,7 @@ function App() {
   async function clearFailed() {
     setQueueMessage("");
     try {
-      await post("/queue/clear-failed", {});
+      await apiPost("/queue/clear-failed", {});
       setQueueMessage("Failed queue items were cleared.");
     } catch {
       setQueueMessage("Failed items could not be cleared.");
@@ -589,7 +602,7 @@ function App() {
     setQueueMessage("");
     setFallbackMessage("");
     try {
-      await post("/queue/clear-completed", {});
+      await apiPost("/queue/clear-completed", {});
     } catch {
       setQueueMessage("Queue state could not be cleared.");
       return;
@@ -1473,8 +1486,8 @@ function PlaylistList(props: {
                     </Text>
                   </Box>
                   <Group gap={6} wrap="nowrap">
-                    <Button size="xs" onClick={() => props.onQueue(playlist.id)}>
-                      Queue
+                    <Button size="xs" variant="light" onClick={() => props.onQueue(playlist.id)}>
+                      Add to queue
                     </Button>
                     <Button size="xs" variant="light" onClick={() => props.onEdit(playlist)}>
                       Edit
@@ -1575,12 +1588,27 @@ function LogsPanel(props: { logs: LogsResponse | undefined }) {
   );
 }
 
-async function post(path: string, body: Record<string, unknown>, method = "POST") {
-  await request(path, {
+async function apiPost<T = void>(
+  path: string,
+  body: Record<string, unknown>,
+  method = "POST"
+): Promise<T> {
+  return postJson<T>(path, body, method);
+}
+
+async function postJson<T>(
+  path: string,
+  body: Record<string, unknown>,
+  method = "POST"
+): Promise<T> {
+  const response = await fetch(`${apiBase}${path}`, {
     body: JSON.stringify(body),
     headers: { "content-type": "application/json" },
     method
   });
+
+  if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+  return (await response.json()) as T;
 }
 
 function uploadFile(file: File, onProgress: (progress: number) => void): Promise<void> {

@@ -355,7 +355,7 @@ export class QueueRepository {
     }
 
     const positions = rows.map((row) => row.position);
-    const shuffled = shuffle(rows);
+    const shuffled = visiblyShuffle(rows);
 
     this.db.exec("BEGIN IMMEDIATE;");
     try {
@@ -574,6 +574,16 @@ function isTerminalStatus(status: QueueEntryStatus): boolean {
   return (
     status === "completed" || status === "failed" || status === "skipped" || status === "cancelled"
   );
+}
+
+function visiblyShuffle<T>(values: T[]): T[] {
+  const shuffled = shuffle(values);
+
+  if (values.length > 1 && shuffled.every((value, index) => value === values[index])) {
+    shuffled.push(shuffled.shift()!);
+  }
+
+  return shuffled;
 }
 
 function shuffle<T>(values: T[]): T[] {
