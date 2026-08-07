@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { MediaItem, QueueEntry } from "@caretv/core";
 
@@ -417,6 +417,43 @@ describe("database repositories", () => {
       expect(queue.list().map((entry) => entry.id)).toEqual(["active", "second", "first", "done"]);
       expect(queue.move("first", "up")).toBe(true);
       expect(queue.list().map((entry) => entry.id)).toEqual(["active", "first", "second", "done"]);
+    });
+  });
+
+  it("shuffles queued entries without moving active or terminal entries", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({ ...fakeQueueEntry("active", "media-1", 1), status: "playing" });
+      queue.enqueue(fakeQueueEntry("first", "media-1", 2));
+      queue.enqueue(fakeQueueEntry("second", "media-1", 3));
+      queue.enqueue(fakeQueueEntry("third", "media-1", 4));
+      queue.enqueue({ ...fakeQueueEntry("done", "media-1", 5), status: "completed" });
+
+      const random = vi.spyOn(Math, "random");
+      random.mockReturnValueOnce(0).mockReturnValueOnce(0);
+
+      try {
+        expect(queue.shuffleQueued().map((entry) => entry.id)).toEqual([
+          "active",
+          "second",
+          "third",
+          "first",
+          "done"
+        ]);
+      } finally {
+        random.mockRestore();
+      }
+
+      expect(queue.listPlaybackOrder()).toMatchObject([
+        { id: "active", position: 1, status: "playing" },
+        { id: "second", position: 2, status: "queued" },
+        { id: "third", position: 3, status: "queued" },
+        { id: "first", position: 4, status: "queued" },
+        { id: "done", position: 5, status: "completed" }
+      ]);
     });
   });
 

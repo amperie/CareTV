@@ -22,7 +22,13 @@ import {
 } from "@caretv/adapters";
 import type { AdapterContext, PlaybackObservation, StreamingAdapter } from "@caretv/adapters";
 import { loadConfig } from "@caretv/config";
-import type { MediaItem, PlaybackCommand, PlaybackEvent, PlaybackState, QueueEntry } from "@caretv/core";
+import type {
+  MediaItem,
+  PlaybackCommand,
+  PlaybackEvent,
+  PlaybackState,
+  QueueEntry
+} from "@caretv/core";
 import { createIdleState, transition } from "@caretv/state-machine";
 import type { PlaybackStateEvent } from "@caretv/state-machine";
 
@@ -66,13 +72,29 @@ interface DurableOutbox {
   queueReports?: Record<string, PendingQueueReport>;
 }
 
-const durableOutboxPath = join(config.values.runtimeDir, `${config.values.applianceId}-outbox.json`);
+interface OfflineQueueSnapshot {
+  syncedAt: string;
+  playback: PlaybackSettings;
+  queue: QueueEntry[];
+  media: Record<string, MediaItem>;
+}
+
+const durableOutboxPath = join(
+  config.values.runtimeDir,
+  `${config.values.applianceId}-outbox.json`
+);
+const offlineQueuePath = join(
+  config.values.runtimeDir,
+  `${config.values.applianceId}-offline-queue.json`
+);
 const maxPendingPlaybackEvents = 500;
 const pendingQueueReports = new Map<string, PendingQueueReport>();
 const pendingPlaybackEvents: PlaybackEvent[] = [];
+let offlineQueueSnapshot: OfflineQueueSnapshot | undefined;
 
 async function main(): Promise<void> {
   loadDurableOutbox();
+  loadOfflineQueueSnapshot();
   console.log(
     JSON.stringify({
       applianceId: config.values.applianceId,
@@ -91,11 +113,13 @@ async function main(): Promise<void> {
   for (;;) {
     try {
       if (!(await runControlPlaneTask("Media maintenance", mediaMaintenance))) {
+        await playOfflineQueueEntry();
         await sleep(Math.max(config.values.appliancePollMs, serverRetryMs));
         continue;
       }
 
       if (!(await runControlPlaneTask("Login command polling", applyLoginCommands))) {
+        await playOfflineQueueEntry();
         await sleep(Math.max(config.values.appliancePollMs, serverRetryMs));
         continue;
       }
@@ -103,12 +127,14 @@ async function main(): Promise<void> {
       const playback = await pollPlaybackSettings();
 
       if (!playback) {
+        await playOfflineQueueEntry();
         await sleep(Math.max(config.values.appliancePollMs, serverRetryMs));
         continue;
       }
 
       await flushPendingQueueReports();
       await flushPendingPlaybackEvents();
+      await syncOfflineQueueSnapshot(playback);
 
       if (!playback.enabled) {
         await sleep(config.values.appliancePollMs);
@@ -296,15 +322,17 @@ async function pollPlaybackSettings(): Promise<PlaybackSettings | undefined> {
   }
 }
 
-async function play(queueEntry: QueueEntry): Promise<void> {
+async function play(queueEntry: QueueEntry, offlineMediaItem?: MediaItem): Promise<void> {
   playbackInProgress = true;
-  let mediaItem: MediaItem | undefined;
+  let mediaItem: MediaItem | undefined = offlineMediaItem;
 
-  try {
-    mediaItem = await getQueueMedia(queueEntry);
-  } catch (error) {
-    playbackInProgress = false;
-    throw error;
+  if (!mediaItem) {
+    try {
+      mediaItem = await getQueueMedia(queueEntry);
+    } catch (error) {
+      playbackInProgress = false;
+      throw error;
+    }
   }
 
   if (!mediaItem) {
@@ -410,6 +438,116 @@ async function getQueueMedia(queueEntry: QueueEntry): Promise<MediaItem | undefi
 
     throw error;
   }
+}
+
+async function syncOfflineQueueSnapshot(playback: PlaybackSettings): Promise<void> {
+  try {
+    const [queueEntries, mediaItems] = await Promise.all([client.playbackQueue(), client.media()]);
+    offlineQueueSnapshot = {
+      syncedAt: new Date().toISOString(),
+      playback,
+      queue: queueEntries,
+      media: Object.fromEntries(mediaItems.map((item) => [item.id, item]))
+    };
+    persistOfflineQueueSnapshot();
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Offline queue snapshot sync failed.",
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+  }
+}
+
+async function playOfflineQueueEntry(): Promise<boolean> {
+  const selected = selectOfflineQueueEntry();
+
+  if (!selected) {
+    return false;
+  }
+
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      message: "Server unavailable; playing from offline queue snapshot.",
+      queueEntryId: selected.entry.id,
+      mediaItemId: selected.mediaItem.id,
+      snapshotSyncedAt: offlineQueueSnapshot?.syncedAt
+    })
+  );
+  await play(selected.entry, selected.mediaItem);
+  return true;
+}
+
+function selectOfflineQueueEntry(): { entry: QueueEntry; mediaItem: MediaItem } | undefined {
+  if (!offlineQueueSnapshot?.playback.enabled || !canSelectQueueEntry()) {
+    return undefined;
+  }
+
+  const queue = [...offlineQueueSnapshot.queue].sort((a, b) => a.position - b.position);
+
+  for (const entry of queue) {
+    if (effectiveQueueStatus(entry) !== "queued") {
+      continue;
+    }
+
+    const mediaItem = offlineQueueSnapshot.media[entry.mediaItemId];
+
+    if (!mediaItem || !mediaItem.enabled || !isOfflinePlayable(mediaItem)) {
+      continue;
+    }
+
+    return {
+      entry,
+      mediaItem
+    };
+  }
+
+  return undefined;
+}
+
+function effectiveQueueStatus(entry: QueueEntry): QueueEntry["status"] {
+  return pendingQueueReports.get(entry.id)?.status ?? entry.status;
+}
+
+function updateOfflineQueueStatus(
+  queueEntryId: string,
+  status: QueueEntry["status"],
+  fields: Record<string, unknown>
+): void {
+  if (!offlineQueueSnapshot) {
+    return;
+  }
+
+  offlineQueueSnapshot = {
+    ...offlineQueueSnapshot,
+    queue: offlineQueueSnapshot.queue.map((entry) =>
+      entry.id === queueEntryId
+        ? {
+            ...entry,
+            status,
+            ...(typeof fields.completedAt === "string" ? { completedAt: fields.completedAt } : {}),
+            ...(typeof fields.lastErrorCode === "string"
+              ? { lastErrorCode: fields.lastErrorCode }
+              : {}),
+            ...(typeof fields.lastErrorMessage === "string"
+              ? { lastErrorMessage: fields.lastErrorMessage }
+              : {})
+          }
+        : entry
+    )
+  };
+  persistOfflineQueueSnapshot();
+}
+
+function isOfflinePlayable(mediaItem: MediaItem): boolean {
+  if (mediaItem.service !== "local") {
+    return true;
+  }
+
+  return Boolean(mediaItem.localPath && existsSync(mediaItem.localPath));
 }
 
 async function startWithRecovery(
@@ -741,7 +879,10 @@ async function reportQueueStatus(
 ): Promise<boolean> {
   return client
     .updateQueueStatus(queueEntryId, status, fields)
-    .then(() => true)
+    .then(() => {
+      updateOfflineQueueStatus(queueEntryId, status, fields);
+      return true;
+    })
     .catch((error) => {
       if (isConflictResponseError(error)) {
         console.warn(
@@ -757,6 +898,7 @@ async function reportQueueStatus(
       }
 
       pendingQueueReports.set(queueEntryId, { fields, status });
+      updateOfflineQueueStatus(queueEntryId, status, fields);
       persistDurableOutbox();
       console.warn(
         JSON.stringify({
@@ -909,6 +1051,46 @@ function persistDurableOutbox(): void {
         level: "warn",
         message: "Durable appliance outbox could not be saved.",
         path: durableOutboxPath,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+  }
+}
+
+function loadOfflineQueueSnapshot(): void {
+  if (!existsSync(offlineQueuePath)) {
+    return;
+  }
+
+  try {
+    offlineQueueSnapshot = JSON.parse(
+      readFileSync(offlineQueuePath, "utf8")
+    ) as OfflineQueueSnapshot;
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Offline queue snapshot could not be loaded.",
+        path: offlineQueuePath,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+  }
+}
+
+function persistOfflineQueueSnapshot(): void {
+  if (!offlineQueueSnapshot) {
+    return;
+  }
+
+  try {
+    writeFileSync(offlineQueuePath, JSON.stringify(offlineQueueSnapshot, null, 2));
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Offline queue snapshot could not be saved.",
+        path: offlineQueuePath,
         error: error instanceof Error ? error.message : "Unknown error"
       })
     );
@@ -1223,6 +1405,14 @@ class ServerClient {
 
   public playbackSettings() {
     return this.get<PlaybackSettings>("/api/v1/appliance/playback");
+  }
+
+  public media() {
+    return this.get<MediaItem[]>("/api/v1/media");
+  }
+
+  public playbackQueue() {
+    return this.get<QueueEntry[]>("/api/v1/queue");
   }
 
   public syncMediaInventory(applianceId: string, items: LocalMediaInventoryItem[]) {

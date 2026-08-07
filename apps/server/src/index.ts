@@ -326,6 +326,10 @@ app.post("/api/v1/queue/clear-failed", () => {
   return { cleared: queue.clearFailed() };
 });
 
+app.post("/api/v1/queue/shuffle", () => {
+  return { queue: queue.shuffleQueued() };
+});
+
 app.delete("/api/v1/queue/:id", (request, reply) => {
   const id = routeParam(request.params, "id");
 
@@ -1335,11 +1339,7 @@ function reconcileQueueWithApplianceState(state: PlaybackState | undefined): voi
 
   const idleStaleMs = Math.max(config.values.applianceHeartbeatMs * 12, 10 * 60_000);
   const startedBefore = new Date(Date.now() - idleStaleMs).toISOString();
-  const reconciled = queue.reconcileStaleActive(
-    "skipped",
-    "appliance-idle",
-    startedBefore
-  );
+  const reconciled = queue.reconcileStaleActive("skipped", "appliance-idle", startedBefore);
 
   if (reconciled > 0) {
     app.log.warn({ reconciled, phase: state.phase }, "Reconciled stale active queue entries");

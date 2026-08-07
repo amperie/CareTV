@@ -551,6 +551,18 @@ function App() {
     }
   }
 
+  async function shuffleQueue() {
+    setQueueMessage("");
+
+    try {
+      await post("/queue/shuffle", {});
+      setQueueMessage("Queue randomized.");
+    } catch {
+      setQueueMessage("Queue could not be randomized.");
+    }
+    await refresh();
+  }
+
   async function clearCompleted() {
     setQueueMessage("");
     try {
@@ -682,6 +694,7 @@ function App() {
                     onPlay={(id) => void playQueueEntry(id)}
                     onRemove={(id) => void removeQueueEntry(id)}
                     onReset={() => void resetLab()}
+                    onShuffle={() => void shuffleQueue()}
                   />
                 </Stack>
               </Tabs.Panel>
@@ -749,6 +762,7 @@ function App() {
                     onPlay={(id) => void playQueueEntry(id)}
                     onRemove={(id) => void removeQueueEntry(id)}
                     onReset={() => void resetLab()}
+                    onShuffle={() => void shuffleQueue()}
                   />
                 </Stack>
               </Tabs.Panel>
@@ -886,12 +900,14 @@ function QueuePanel(props: {
   onPlay: (id: string) => void;
   onRemove: (id: string) => void;
   onReset: () => void;
+  onShuffle: () => void;
 }) {
   const visibleQueue =
     props.status?.queue.filter((entry) => isVisibleQueueEntry(entry, props.mediaById)) ?? [];
   const durationSummary = queueDurationSummary(visibleQueue, props.mediaById, props.status?.state);
   const failedCount = visibleQueue.filter((entry) => entry.status === "failed").length;
   const terminalCount = visibleQueue.filter((entry) => isTerminalQueueStatus(entry.status)).length;
+  const queuedCount = visibleQueue.filter((entry) => entry.status === "queued").length;
 
   return (
     <Card withBorder radius="md" shadow="xs">
@@ -902,6 +918,15 @@ function QueuePanel(props: {
             {visibleQueue.length ? <Badge variant="light">{visibleQueue.length}</Badge> : null}
           </Group>
           <Group gap="xs">
+            <Button
+              disabled={queuedCount < 2}
+              leftSection={<IconRepeat size={16} />}
+              size="xs"
+              variant="light"
+              onClick={() => props.onShuffle()}
+            >
+              Shuffle
+            </Button>
             <Button
               disabled={terminalCount === 0 && !props.message}
               leftSection={<IconEraser size={16} />}

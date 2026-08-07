@@ -297,9 +297,9 @@ export class QueueRepository {
   }
 
   public clearFailed(): number {
-    const ids = this.db
-      .prepare("SELECT id FROM queue_entries WHERE status = 'failed'")
-      .all() as { id: string }[];
+    const ids = this.db.prepare("SELECT id FROM queue_entries WHERE status = 'failed'").all() as {
+      id: string;
+    }[];
 
     return ids.reduce((count, row) => count + this.deleteTerminal(row.id), 0);
   }
@@ -339,6 +339,40 @@ export class QueueRepository {
         .run(neighbor.position, current.id);
       this.db.exec("COMMIT;");
       return true;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  public shuffleQueued(): QueueEntry[] {
+    const rows = this.db
+      .prepare("SELECT * FROM queue_entries WHERE status = 'queued' ORDER BY position ASC")
+      .all() as unknown as QueueRow[];
+
+    if (rows.length < 2) {
+      return rows.map(mapQueueRow);
+    }
+
+    const positions = rows.map((row) => row.position);
+    const shuffled = shuffle(rows);
+
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const [index, row] of rows.entries()) {
+        this.db
+          .prepare("UPDATE queue_entries SET position = ? WHERE id = ?")
+          .run(-index - 1, row.id);
+      }
+
+      for (const [index, row] of shuffled.entries()) {
+        this.db
+          .prepare("UPDATE queue_entries SET position = ? WHERE id = ?")
+          .run(positions[index]!, row.id);
+      }
+
+      this.db.exec("COMMIT;");
+      return this.listPlaybackOrder();
     } catch (error) {
       this.db.exec("ROLLBACK;");
       throw error;
@@ -540,6 +574,17 @@ function isTerminalStatus(status: QueueEntryStatus): boolean {
   return (
     status === "completed" || status === "failed" || status === "skipped" || status === "cancelled"
   );
+}
+
+function shuffle<T>(values: T[]): T[] {
+  const shuffled = [...values];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex]!, shuffled[index]!];
+  }
+
+  return shuffled;
 }
 
 function mapQueueRow(row: QueueRow): QueueEntry {
