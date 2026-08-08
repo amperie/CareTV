@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { mkdir, rename, rm, stat, unlink } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { Transform, type Readable } from "node:stream";
@@ -61,11 +61,16 @@ app.addContentTypeParser("application/octet-stream", (_request, payload, done) =
 
 app.addHook("onRequest", (request, reply, done) => {
   reply.header("Access-Control-Allow-Origin", "*");
-  reply.header("Access-Control-Allow-Headers", "content-type");
+  reply.header("Access-Control-Allow-Headers", "authorization,content-type,x-caretv-token");
   reply.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
 
   if (request.method === "OPTIONS") {
     reply.send();
+    return;
+  }
+
+  if (!isAuthorized(request.url, request.headers)) {
+    reply.code(401).send({ error: "unauthorized" });
     return;
   }
 
@@ -1213,6 +1218,29 @@ function parseBody(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>)
     : {};
+}
+
+function isAuthorized(url: string, headers: Record<string, string | string[] | undefined>): boolean {
+  const token = config.values.authToken;
+  if (!token || !url.startsWith("/api/")) return true;
+
+  const supplied = bearerToken(headers.authorization) ?? stringHeader(headers["x-caretv-token"]);
+  return Boolean(supplied && safeStringEqual(supplied, token));
+}
+
+function bearerToken(header: string | string[] | undefined): string | undefined {
+  const value = stringHeader(header);
+  return value?.toLowerCase().startsWith("bearer ") ? value.slice(7).trim() : undefined;
+}
+
+function stringHeader(header: string | string[] | undefined): string | undefined {
+  return Array.isArray(header) ? header[0] : header;
+}
+
+function safeStringEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function createCommand(type: PlaybackCommandType, mediaItemId?: string): PlaybackCommand {

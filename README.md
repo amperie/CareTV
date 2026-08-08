@@ -23,8 +23,8 @@ The current implementation is source-checkout prototype code, not a packaged Win
 
 ## Important Limits
 
-- There is no production authentication layer yet. Do not expose the raw dev server to the public
-  internet.
+- API endpoints can be protected with `CARETV_AUTH_TOKEN`, but do not expose the raw Node server
+  directly. Put HTTPS in front of it with a reverse proxy such as Caddy.
 - The server UI does not collect every appliance process log. It shows stored playback events and
   commands. Appliance startup errors, server-connectivity failures, Chrome stderr/stdout, and crashes
   can remain local to the appliance console or scheduled-task history.
@@ -142,6 +142,7 @@ Common keys:
 - `runtimeDir`: SQLite/upload/runtime data directory
 - `chromeProfileDir`: persistent Chrome profile used by adapters
 - `serverUrl`: URL the appliance polls
+- `authToken`: optional shared API token; required by API clients when configured
 - `applianceId`: stable appliance id
 - `applianceName`: dashboard display name
 - `appliancePollMs`: queue/settings polling interval
@@ -152,6 +153,28 @@ Common keys:
 - `applianceMediaScanMs`: local media scan interval
 - `notificationWebhookUrl`: optional failure notification endpoint
 - `remoteSupportUrl`: optional dashboard link for remote support
+
+## Linux VPS Server Deployment
+
+For an internet-facing server, use the setup script on an Ubuntu/Debian VPS after DNS points at the
+VPS and ports `80`/`443` are open:
+
+```bash
+sudo bash scripts/setup-linux-vps.sh \
+  --domain caretv.example.com \
+  --repo https://github.com/you/caretv.git
+```
+
+The script installs Node.js 22, Caddy, a `caretv-server` systemd service, builds the web UI, serves
+it through Caddy, and writes `/etc/caretv/server.env`. It generates and prints the shared auth token
+unless `--token` is supplied. Reruns reuse the existing token by default.
+
+Set the appliance to the printed values:
+
+```powershell
+CARETV_SERVER_URL=https://caretv.example.com
+CARETV_AUTH_TOKEN=<printed-token>
+```
 
 ## Appliance Deployment
 

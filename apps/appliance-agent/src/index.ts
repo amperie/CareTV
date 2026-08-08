@@ -1392,7 +1392,8 @@ async function heartbeat(force = false): Promise<void> {
 class ServerClient {
   public constructor(
     private readonly baseUrl: string,
-    private readonly requestTimeoutMs: number
+    private readonly requestTimeoutMs: number,
+    private readonly authToken?: string
   ) {}
 
   public heartbeat(applianceId: string, name: string, playbackState: PlaybackState) {
@@ -1560,9 +1561,8 @@ class ServerClient {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
         signal: controller.signal,
-        ...(body
-          ? { body: JSON.stringify(body), headers: { "content-type": "application/json" } }
-          : {})
+        headers: this.headers(Boolean(body)),
+        ...(body ? { body: JSON.stringify(body) } : {})
       });
     } catch (error) {
       throw new Error(
@@ -1574,9 +1574,20 @@ class ServerClient {
 
     return response;
   }
+
+  private headers(hasBody: boolean): Record<string, string> {
+    return {
+      ...(hasBody ? { "content-type": "application/json" } : {}),
+      ...(this.authToken ? { authorization: `Bearer ${this.authToken}` } : {})
+    };
+  }
 }
 
-const client = new ServerClient(config.values.serverUrl, config.values.applianceRequestTimeoutMs);
+const client = new ServerClient(
+  config.values.serverUrl,
+  config.values.applianceRequestTimeoutMs,
+  config.values.authToken
+);
 
 void main();
 

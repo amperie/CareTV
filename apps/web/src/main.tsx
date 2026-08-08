@@ -46,7 +46,9 @@ import {
 
 import "./styles.css";
 
-const apiBase = `http://${window.location.hostname}:4010/api/v1`;
+const apiBase = "/api/v1";
+const authTokenKey = "caretv.authToken";
+let apiAuthToken = initialAuthToken();
 const mediaCacheKey = "caretv.media";
 const playlistCacheKey = "caretv.playlists";
 const theme = createTheme({
@@ -1603,10 +1605,11 @@ async function postJson<T>(
 ): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     body: JSON.stringify(body),
-    headers: { "content-type": "application/json" },
+    headers: authHeaders({ "content-type": "application/json" }),
     method
   });
 
+  if (response.status === 401 && promptForAuthToken()) return postJson<T>(path, body, method);
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
   return (await response.json()) as T;
 }
@@ -1616,6 +1619,7 @@ function uploadFile(file: File, onProgress: (progress: number) => void): Promise
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${apiBase}/uploads?filename=${encodeURIComponent(file.name)}`);
     xhr.setRequestHeader("content-type", "application/octet-stream");
+    if (apiAuthToken) xhr.setRequestHeader("authorization", `Bearer ${apiAuthToken}`);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
         onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
@@ -1625,6 +1629,8 @@ function uploadFile(file: File, onProgress: (progress: number) => void): Promise
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress(100);
         resolve();
+      } else if (xhr.status === 401 && promptForAuthToken()) {
+        uploadFile(file, onProgress).then(resolve, reject);
       } else {
         reject(new Error(`Upload failed: ${xhr.status}`));
       }
@@ -1636,17 +1642,52 @@ function uploadFile(file: File, onProgress: (progress: number) => void): Promise
 }
 
 async function request(path: string, init: RequestInit) {
-  const response = await fetch(`${apiBase}${path}`, init);
+  const response = await fetch(`${apiBase}${path}`, {
+    ...init,
+    headers: authHeaders(init.headers)
+  });
+  if (response.status === 401 && promptForAuthToken()) return request(path, init);
   if (!response.ok) throw new Error(`Request failed: ${response.status}`);
 }
 
 async function getJson<T>(path: string): Promise<T | undefined> {
   try {
-    const response = await fetch(`${apiBase}${path}`, { cache: "no-store" });
+    const response = await fetch(`${apiBase}${path}`, {
+      cache: "no-store",
+      headers: authHeaders()
+    });
+    if (response.status === 401 && promptForAuthToken()) return getJson<T>(path);
     return response.ok ? ((await response.json()) as T) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function initialAuthToken(): string | undefined {
+  const token = new URLSearchParams(window.location.search).get("token")?.trim();
+  if (token) {
+    window.localStorage.setItem(authTokenKey, token);
+    window.history.replaceState(null, "", window.location.pathname);
+    return token;
+  }
+
+  return window.localStorage.getItem(authTokenKey)?.trim() || undefined;
+}
+
+function promptForAuthToken(): boolean {
+  const token = window.prompt("CareTV auth token")?.trim();
+  if (!token) return false;
+
+  apiAuthToken = token;
+  window.localStorage.setItem(authTokenKey, token);
+  return true;
+}
+
+function authHeaders(headers?: HeadersInit): HeadersInit {
+  return {
+    ...Object.fromEntries(new Headers(headers).entries()),
+    ...(apiAuthToken ? { authorization: `Bearer ${apiAuthToken}` } : {})
+  };
 }
 
 function loadCachedArray<T>(key: string): T[] {

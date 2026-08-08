@@ -6,6 +6,7 @@
   "chromeProfileDir": "C:\\CareTV\\chrome-profile",
   "timezone": "America/Los_Angeles",
   "serverUrl": "http://w11.lan:4010",
+  "authToken": "change-this-to-a-long-random-token",
   "applianceId": "local-appliance",
   "applianceName": "Local Appliance",
   "appliancePollMs": 1000,
