@@ -6,11 +6,12 @@ BRANCH="main"
 DOMAIN=""
 REPO_URL=""
 AUTH_TOKEN=""
+ADMIN_IP="107.217.177.172"
 
 usage() {
   cat <<'EOF'
 Usage:
-  sudo bash scripts/setup-linux-vps.sh --domain caretv.example.com --repo https://github.com/you/caretv.git [--branch main] [--token TOKEN]
+  sudo bash scripts/setup-linux-vps.sh --domain caretv.example.com --repo https://github.com/you/caretv.git [--branch main] [--token TOKEN] [--admin-ip IP]
 
 What it does:
   - installs Node.js 22, pnpm via corepack, git, and Caddy
@@ -19,11 +20,12 @@ What it does:
   - builds the API and web UI
   - runs the API as systemd service caretv-server
   - serves the web UI and HTTPS through Caddy
+  - enables UFW: allows 22, 80, 443, and full access from --admin-ip
 
 Prereqs:
   - Ubuntu/Debian VPS
   - DNS A/AAAA record for --domain points at this VPS
-  - ports 80 and 443 open
+  - ports 80 and 443 allowed by the VPS provider firewall, if one exists
 EOF
 }
 
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --token)
       AUTH_TOKEN="${2:-}"
+      shift 2
+      ;;
+    --admin-ip)
+      ADMIN_IP="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -95,7 +101,23 @@ resolve_auth_token() {
 
 install_base_packages() {
   apt-get update
-  apt-get install -y ca-certificates curl debian-keyring debian-archive-keyring gnupg git openssl
+  apt-get install -y ca-certificates curl debian-keyring debian-archive-keyring gnupg git openssl ufw
+}
+
+configure_firewall() {
+  ufw --force reset
+  ufw default deny incoming
+  ufw default allow outgoing
+
+  ufw allow 22/tcp comment "SSH"
+  ufw allow 80/tcp comment "HTTP for Caddy and Let's Encrypt"
+  ufw allow 443/tcp comment "HTTPS for CareTV"
+
+  if [[ -n "$ADMIN_IP" ]]; then
+    ufw allow from "$ADMIN_IP" comment "Trusted admin IP"
+  fi
+
+  ufw --force enable
 }
 
 install_node() {
@@ -225,6 +247,7 @@ EOF
 }
 
 install_base_packages
+configure_firewall
 resolve_auth_token
 install_node
 install_caddy
@@ -250,6 +273,7 @@ Useful commands:
   systemctl status caretv-server
   journalctl -u caretv-server -f
   systemctl status caddy
+  ufw status verbose
 
 Keep the token private. It is stored on the server at:
   $ENV_FILE

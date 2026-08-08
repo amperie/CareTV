@@ -167,7 +167,9 @@ sudo bash scripts/setup-linux-vps.sh \
 
 The script installs Node.js 22, Caddy, a `caretv-server` systemd service, builds the web UI, serves
 it through Caddy, and writes `/etc/caretv/server.env`. It generates and prints the shared auth token
-unless `--token` is supplied. Reruns reuse the existing token by default.
+unless `--token` is supplied. Reruns reuse the existing token by default. It also enables UFW with
+default-deny incoming rules, opens SSH/HTTP/HTTPS, and allows full access from `--admin-ip`
+(`107.217.177.172` by default).
 
 Set the appliance to the printed values:
 
