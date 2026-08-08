@@ -109,12 +109,12 @@ configure_firewall() {
   ufw default deny incoming
   ufw default allow outgoing
 
-  ufw allow 22/tcp comment "SSH"
-  ufw allow 80/tcp comment "HTTP for Caddy and Let's Encrypt"
-  ufw allow 443/tcp comment "HTTPS for CareTV"
+  ufw allow 22/tcp
+  ufw allow 80/tcp
+  ufw allow 443/tcp
 
   if [[ -n "$ADMIN_IP" ]]; then
-    ufw allow from "$ADMIN_IP" comment "Trusted admin IP"
+    ufw allow from "$ADMIN_IP"
   fi
 
   ufw --force enable
