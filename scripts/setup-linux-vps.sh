@@ -109,12 +109,12 @@ configure_firewall() {
   ufw default deny incoming
   ufw default allow outgoing
 
-  ufw allow 22/tcp
-  ufw allow 80/tcp
-  ufw allow 443/tcp
+  ufw allow proto tcp to any port 22
+  ufw allow proto tcp to any port 80
+  ufw allow proto tcp to any port 443
 
   if [[ -n "$ADMIN_IP" ]]; then
-    ufw allow from "$ADMIN_IP"
+    ufw allow from "$ADMIN_IP" to any
   fi
 
   ufw --force enable
