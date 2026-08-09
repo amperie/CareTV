@@ -232,12 +232,19 @@ write_caddyfile() {
 $DOMAIN {
   encode zstd gzip
 
-  reverse_proxy /api/* 127.0.0.1:4010
-  reverse_proxy /health 127.0.0.1:4010
+  handle /api/* {
+    reverse_proxy 127.0.0.1:4010
+  }
 
-  root * $CURRENT_DIR/apps/web/dist
-  try_files {path} /index.html
-  file_server
+  handle /health {
+    reverse_proxy 127.0.0.1:4010
+  }
+
+  handle {
+    root * $CURRENT_DIR/apps/web/dist
+    try_files {path} /index.html
+    file_server
+  }
 }
 EOF
 
