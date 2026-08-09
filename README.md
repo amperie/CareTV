@@ -18,3 +18,9 @@ And for now it does remote control, media queues, local playback, basic streamin
 
 For setup, architecture, deployment notes, and current limitations, see the
 [technical README](docs/technical-readme.md).
+
+## Remote UI
+
+This is the remote UI I use to set up and manage the movie queue from another device.
+
+![CareTV remote movie queue dashboard](docs/assets/caretv-remote-ui.png)
