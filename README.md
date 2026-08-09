@@ -1,3 +1,5 @@
+![CareTV automation dashboard controlling a TV-connected playback appliance](docs/assets/caretv-readme-hero.png)
+
 # CareTV
 
 CareTV is a Windows-focused television automation prototype. A server/dashboard manages media,
