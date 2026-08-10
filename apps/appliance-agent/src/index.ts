@@ -191,23 +191,7 @@ async function applyLoginCommands(): Promise<void> {
       continue;
     }
 
-    await client.updateCommand(command.id, "accepted");
-    try {
-      await openLoginBrowser(command.type === "login-youtube" ? "youtube" : "prime", {
-        userDataDir: config.values.chromeProfileDir
-      });
-      await client.updateCommand(command.id, "completed");
-    } catch (error) {
-      console.warn(
-        JSON.stringify({
-          level: "warn",
-          message: "Login browser launch failed.",
-          command: command.type,
-          error: error instanceof Error ? error.message : "Unknown error"
-        })
-      );
-      await client.updateCommand(command.id, "failed");
-    }
+    await applyLoginCommand(command);
   }
 }
 
@@ -747,6 +731,7 @@ async function applyCommands(
 
   for (const command of commands) {
     if (command.type === "login-youtube" || command.type === "login-prime") {
+      await applyLoginCommand(command);
       continue;
     }
 
@@ -795,6 +780,29 @@ async function applyCommands(
   }
 
   return undefined;
+}
+
+async function applyLoginCommand(command: PlaybackCommand): Promise<void> {
+  await reportCommandStatus(command.id, "accepted");
+  try {
+    const service = command.type === "login-youtube" ? "youtube" : "prime";
+    const mediaItem = command.mediaItemId ? await client.getMedia(command.mediaItemId) : undefined;
+    await openLoginBrowser(service, {
+      userDataDir: config.values.chromeProfileDir,
+      ...(service === "youtube" && mediaItem?.url ? { url: mediaItem.url } : {})
+    });
+    await reportCommandStatus(command.id, "completed");
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        message: "Login browser launch failed.",
+        command: command.type,
+        error: error instanceof Error ? error.message : "Unknown error"
+      })
+    );
+    await reportCommandStatus(command.id, "failed");
+  }
 }
 
 async function applyObservation(

@@ -264,10 +264,10 @@ function App() {
     await refresh();
   }
 
-  async function openLogin(service: "prime" | "youtube") {
+  async function openLogin(service: "prime" | "youtube", mediaItemId?: string) {
     setQueueMessage("");
     try {
-      await apiPost(`/login/${service}`, {});
+      await apiPost(`/login/${service}`, mediaItemId ? { mediaItemId } : {});
       setQueueMessage(`Opened ${serviceLabel(service)} login on the appliance.`);
     } catch {
       setQueueMessage(`Could not open ${serviceLabel(service)} login.`);
@@ -657,7 +657,9 @@ function App() {
                         leftSection={<IconLogin2 size={16} />}
                         size="xs"
                         variant="light"
-                        onClick={() => void openLogin(playbackIssue.service!)}
+                        onClick={() =>
+                          void openLogin(playbackIssue.service!, playbackIssue.mediaItemId)
+                        }
                       >
                         Open {serviceLabel(playbackIssue.service)} login
                       </Button>
@@ -1904,6 +1906,7 @@ function currentPlaybackIssue(
 ):
   | {
       message: string;
+      mediaItemId?: string;
       queueEntryId?: string;
       service?: "prime" | "youtube";
       title: string;
@@ -1940,6 +1943,7 @@ function playbackIssueFor(
 ):
   | {
       message: string;
+      mediaItemId?: string;
       queueEntryId?: string;
       service?: "prime" | "youtube";
       title: string;
@@ -1962,6 +1966,7 @@ function playbackIssueFor(
     ) {
       return {
         message: `${friendlyIssueCode(code)}. Open the YouTube login on the appliance, complete the prompt, then requeue the item.`,
+        ...(media ? { mediaItemId: media.id } : {}),
         ...(queueEntryId ? { queueEntryId } : {}),
         service: "youtube",
         title
@@ -1972,6 +1977,7 @@ function playbackIssueFor(
       return {
         message:
           "YouTube is showing a consent prompt. Open the YouTube login on the appliance and clear the prompt.",
+        ...(media ? { mediaItemId: media.id } : {}),
         ...(queueEntryId ? { queueEntryId } : {}),
         service: "youtube",
         title

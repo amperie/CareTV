@@ -725,13 +725,26 @@ app.post("/api/v1/commands", (request, reply) => {
 
 app.post("/api/v1/login/:service", (request, reply) => {
   const service = routeParam(request.params, "service");
+  const body = parseBody(request.body);
+  const mediaItemId = stringOptional(body.mediaItemId);
 
   if (service !== "youtube" && service !== "prime") {
     reply.code(400);
     return { error: "unsupported-login-service" };
   }
 
-  const command = createCommand(service === "youtube" ? "login-youtube" : "login-prime");
+  if (mediaItemId) {
+    const item = media.get(mediaItemId);
+    if (!item || item.service !== service) {
+      reply.code(400);
+      return { error: "login-media-service-mismatch" };
+    }
+  }
+
+  const command = createCommand(
+    service === "youtube" ? "login-youtube" : "login-prime",
+    mediaItemId
+  );
   commands.create(command);
   reply.code(201);
   return command;

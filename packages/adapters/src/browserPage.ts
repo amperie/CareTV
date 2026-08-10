@@ -119,10 +119,12 @@ export class ChromeBrowser {
 
 export async function openLoginBrowser(
   service: LoginBrowserService,
-  options: Pick<ChromeBrowserOptions, "chromePath" | "remoteDebuggingPort" | "userDataDir"> = {}
+  options: Pick<ChromeBrowserOptions, "chromePath" | "remoteDebuggingPort" | "userDataDir"> & {
+    url?: string;
+  } = {}
 ): Promise<void> {
   const port = options.remoteDebuggingPort ?? 9223;
-  const url = loginUrl(service);
+  const url = options.url ?? loginUrl(service);
 
   if (await isDebugPortReady(port)) {
     const target = await createTarget(port, url);
