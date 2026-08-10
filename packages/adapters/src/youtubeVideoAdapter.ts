@@ -175,6 +175,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
         document.querySelectorAll("#error-screen, .ytp-error, .ytp-error-content-wrap, ytd-player-error-message-renderer")
       ).map((element) => element.textContent || "").join(" ");
       const text = [document.body?.innerText || "", errorText].join(" ").replace(/\\s+/g, " ").trim();
+      const playerText = errorText.replace(/\\s+/g, " ").trim();
       return {
         adShowing: Boolean(
           player?.classList.contains("ad-showing") ||
@@ -197,6 +198,7 @@ export class YouTubeVideoAdapter implements StreamingAdapter {
         ),
         hasVideo: Boolean(video),
         paused: video?.paused,
+        playerText,
         readyState: video?.readyState,
         text
       };

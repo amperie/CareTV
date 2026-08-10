@@ -95,6 +95,45 @@ describe("youtube selectors", () => {
     });
   });
 
+  it("ignores blocker text outside the player when the video is playable", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          currentTime: 42,
+          duration: 120,
+          hasVideo: true,
+          paused: false,
+          readyState: 4,
+          text: "Recommended video Sign in to confirm your age"
+        },
+        900
+      )
+    ).toMatchObject({
+      positionSeconds: 42,
+      status: "playing"
+    });
+  });
+
+  it("still reports player-surface blockers when a video element exists", () => {
+    expect(
+      observationFromYouTubeDom(
+        {
+          currentTime: 0,
+          duration: 120,
+          hasVideo: true,
+          paused: true,
+          playerText: "Sign in to confirm your age",
+          readyState: 4,
+          text: "Sign in to confirm your age"
+        },
+        900
+      )
+    ).toMatchObject({
+      errorCode: "youtube-age-verification-required",
+      status: "blocked"
+    });
+  });
+
   it("keeps playing when YouTube is still on the expected video", () => {
     expect(
       observationFromYouTubeDom(

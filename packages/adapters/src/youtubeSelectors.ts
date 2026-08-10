@@ -7,6 +7,7 @@ export interface YouTubeDomState extends VideoDomState {
   expectedVideoId?: string;
   hasAccountButton?: boolean;
   hasSignInButton?: boolean;
+  playerText?: string;
   text: string;
 }
 
@@ -57,12 +58,15 @@ export function observationFromYouTubeDom(
     return blocked("youtube-signin-required", state.text);
   }
 
-  const blocker = blockerPatterns.find(({ pattern }) => pattern.test(state.text));
+  const hasPlayableVideo =
+    state.hasVideo && (state.readyState ?? 0) >= 2 && Number.isFinite(state.duration);
+  const blockerText = hasPlayableVideo ? (state.playerText ?? "") : state.text;
+  const blocker = blockerPatterns.find(({ pattern }) => pattern.test(blockerText));
 
   if (blocker) {
     return blocker.code === "youtube-playback-error"
-      ? { status: "error", errorCode: blocker.code, dialog: state.text.slice(0, 300) }
-      : blocked(blocker.code, state.text);
+      ? { status: "error", errorCode: blocker.code, dialog: blockerText.slice(0, 300) }
+      : blocked(blocker.code, blockerText);
   }
 
   const actualVideoId = currentVideoId(state.currentUrl);
