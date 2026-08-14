@@ -969,6 +969,7 @@ app.post("/api/v1/appliance/queue/:id/requeue", (request, reply) => {
 
 app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
   const body = parseBody(request.body);
+  const id = routeParam(request.params, "id");
   const status = stringField(body, "status", "") as QueueEntryStatus;
 
   if (
@@ -987,13 +988,14 @@ app.post("/api/v1/appliance/queue/:id/status", (request, reply) => {
     return { error: "unsupported-status" };
   }
 
-  const updated = queue.updateStatus(
-    routeParam(request.params, "id"),
-    status,
-    optionalStrings(body)
-  );
+  const updated = queue.updateStatus(id, status, optionalStrings(body));
 
   if (!updated) {
+    const current = queue.get(id);
+    if (current && isTerminalQueueStatus(current.status)) {
+      return { ignored: "queue-entry-terminal", ok: true, status: current.status };
+    }
+
     reply.code(409);
     return { error: "queue-entry-status-conflict" };
   }
@@ -1358,6 +1360,12 @@ function recoverRunnableQueue(playback = playbackSettings()): number {
 function isRunnableQueueStatus(status: QueueEntryStatus): boolean {
   return (
     status === "queued" || status === "starting" || status === "playing" || status === "paused"
+  );
+}
+
+function isTerminalQueueStatus(status: QueueEntryStatus): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "skipped" || status === "cancelled"
   );
 }
 
