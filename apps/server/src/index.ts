@@ -331,6 +331,10 @@ app.post("/api/v1/queue/clear-failed", () => {
   return { cleared: queue.clearFailed() };
 });
 
+app.post("/api/v1/queue/clear-errors", () => {
+  return { cleared: queue.clearErrors() };
+});
+
 app.post("/api/v1/queue/shuffle", () => {
   return { queue: queue.shuffleQueued() };
 });
@@ -1268,7 +1272,10 @@ function parseBody(body: unknown): Record<string, unknown> {
     : {};
 }
 
-function isAuthorized(url: string, headers: Record<string, string | string[] | undefined>): boolean {
+function isAuthorized(
+  url: string,
+  headers: Record<string, string | string[] | undefined>
+): boolean {
   const token = config.values.authToken;
   if (!token || !url.startsWith("/api/")) return true;
 
@@ -1871,9 +1878,9 @@ function shouldUpdateYouTubeTitle(
 
   return Boolean(
     showTitle &&
-      currentTitle.trim() !== nextTitle.trim() &&
-      !currentTitle.toLowerCase().startsWith(`${showTitle.toLowerCase()}:`) &&
-      !currentTitle.toLowerCase().startsWith(`${showTitle.toLowerCase()} -`)
+    currentTitle.trim() !== nextTitle.trim() &&
+    !currentTitle.toLowerCase().startsWith(`${showTitle.toLowerCase()}:`) &&
+    !currentTitle.toLowerCase().startsWith(`${showTitle.toLowerCase()} -`)
   );
 }
 

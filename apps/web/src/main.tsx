@@ -173,55 +173,66 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [uploading, setUploading] = useState(false);
   const refreshSeq = useRef(0);
+  const refreshInFlight = useRef(false);
+  const logsRefreshInFlight = useRef(false);
   const logsRefreshSeq = useRef(0);
 
   async function refresh() {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
     const seq = ++refreshSeq.current;
-    const [mediaItems, playlistItems, playbackStatus, fallbackStatus] = await Promise.all([
-      getJson<MediaItem[]>("/media"),
-      getJson<Playlist[]>("/playlists"),
-      getJson<PlaybackStatus>("/playback/status"),
-      getJson<FallbackResponse>("/fallback/youtube")
-    ]);
+    try {
+      const [mediaItems, playlistItems, playbackStatus, fallbackStatus] = await Promise.all([
+        getJson<MediaItem[]>("/media"),
+        getJson<Playlist[]>("/playlists"),
+        getJson<PlaybackStatus>("/playback/status"),
+        getJson<FallbackResponse>("/fallback/youtube")
+      ]);
 
-    if (seq !== refreshSeq.current) return;
+      if (seq !== refreshSeq.current) return;
 
-    if (Array.isArray(mediaItems)) {
-      setMedia(mediaItems);
-      saveCachedArray(mediaCacheKey, mediaItems);
-    }
+      if (Array.isArray(mediaItems)) {
+        setMedia(mediaItems);
+        saveCachedArray(mediaCacheKey, mediaItems);
+      }
 
-    if (Array.isArray(playlistItems)) {
-      setPlaylists(playlistItems);
-      saveCachedArray(playlistCacheKey, playlistItems);
-    }
+      if (Array.isArray(playlistItems)) {
+        setPlaylists(playlistItems);
+        saveCachedArray(playlistCacheKey, playlistItems);
+      }
 
-    if (playbackStatus) {
-      setStatus(playbackStatus);
-    }
+      if (playbackStatus) {
+        setStatus(playbackStatus);
+      }
 
-    if (fallbackStatus && !fallbackDirtyRef.current) {
-      const currentMediaById = new Map((mediaItems ?? media).map((item) => [item.id, item]));
-      setFallbackItems(fallbackItemsFromPlaylist(fallbackStatus.playlist, currentMediaById));
+      if (fallbackStatus && !fallbackDirtyRef.current) {
+        const currentMediaById = new Map((mediaItems ?? media).map((item) => [item.id, item]));
+        setFallbackItems(fallbackItemsFromPlaylist(fallbackStatus.playlist, currentMediaById));
+      }
+    } finally {
+      refreshInFlight.current = false;
     }
   }
 
   async function refreshLogs() {
+    if (logsRefreshInFlight.current) return;
+    logsRefreshInFlight.current = true;
     const seq = ++logsRefreshSeq.current;
-    const logsStatus = await getJson<LogsResponse>("/logs");
-    if (seq === logsRefreshSeq.current && logsStatus) {
-      setLogs(logsStatus);
+    try {
+      const logsStatus = await getJson<LogsResponse>("/logs");
+      if (seq === logsRefreshSeq.current && logsStatus) {
+        setLogs(logsStatus);
+      }
+    } finally {
+      logsRefreshInFlight.current = false;
     }
   }
 
   useEffect(() => {
     void refresh();
-    void refreshLogs();
     const refreshTimer = window.setInterval(() => void refresh(), 3000);
-    const logsTimer = window.setInterval(() => void refreshLogs(), 30000);
     return () => {
       window.clearInterval(refreshTimer);
-      window.clearInterval(logsTimer);
     };
   }, []);
 
@@ -605,16 +616,21 @@ function App() {
     await refresh();
   }
 
-  async function clearFailed() {
+  async function clearErrors() {
     setQueueMessage("");
     try {
-      await apiPost("/queue/clear-failed", {});
+      await apiPost("/queue/clear-errors", {});
       setStatus((current) =>
-        current ? { ...current, queue: current.queue.filter((entry) => entry.status !== "failed") } : current
+        current
+          ? {
+              ...current,
+              queue: current.queue.map(({ lastErrorCode, lastErrorMessage, ...entry }) => entry)
+            }
+          : current
       );
-      setQueueMessage("Failed queue items were cleared.");
+      setQueueMessage("Queue error messages were cleared.");
     } catch {
-      setQueueMessage("Failed items could not be cleared.");
+      setQueueMessage("Queue error messages could not be cleared.");
     }
     await refresh();
   }
@@ -747,7 +763,7 @@ function App() {
                     queuedIds={queuedIds}
                     status={status}
                     onClearCompleted={() => void clearCompleted()}
-                    onClearFailed={() => void clearFailed()}
+                    onClearErrors={() => void clearErrors()}
                     onClearSlate={() => void clearQueueSlate()}
                     onMove={(id, direction) => void moveQueueEntry(id, direction)}
                     onPlay={(id) => void playQueueEntry(id)}
@@ -815,7 +831,7 @@ function App() {
                     queuedIds={queuedIds}
                     status={status}
                     onClearCompleted={() => void clearCompleted()}
-                    onClearFailed={() => void clearFailed()}
+                    onClearErrors={() => void clearErrors()}
                     onClearSlate={() => void clearQueueSlate()}
                     onMove={(id, direction) => void moveQueueEntry(id, direction)}
                     onPlay={(id) => void playQueueEntry(id)}
@@ -847,7 +863,7 @@ function App() {
               </Tabs.Panel>
 
               <Tabs.Panel value="logs">
-                <LogsPanel logs={logs} />
+                <LogsPanel logs={logs} onRefresh={() => void refreshLogs()} />
               </Tabs.Panel>
             </Tabs>
           </Container>
@@ -953,7 +969,7 @@ function QueuePanel(props: {
   queuedIds: string[];
   status: PlaybackStatus | undefined;
   onClearCompleted: () => void;
-  onClearFailed: () => void;
+  onClearErrors: () => void;
   onClearSlate: () => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onPlay: (id: string) => void;
@@ -964,7 +980,9 @@ function QueuePanel(props: {
   const visibleQueue =
     props.status?.queue.filter((entry) => isVisibleQueueEntry(entry, props.mediaById)) ?? [];
   const durationSummary = queueDurationSummary(visibleQueue, props.mediaById, props.status?.state);
-  const failedCount = visibleQueue.filter((entry) => entry.status === "failed").length;
+  const errorCount = visibleQueue.filter(
+    (entry) => entry.lastErrorCode || entry.lastErrorMessage
+  ).length;
   const terminalCount = visibleQueue.filter((entry) => isTerminalQueueStatus(entry.status)).length;
   const queuedCount = visibleQueue.filter((entry) => entry.status === "queued").length;
 
@@ -997,13 +1015,13 @@ function QueuePanel(props: {
             </Button>
             <Button
               color="red"
-              disabled={failedCount === 0}
-              leftSection={<IconTrash size={16} />}
+              disabled={errorCount === 0}
+              leftSection={<IconEraser size={16} />}
               size="xs"
               variant="light"
-              onClick={() => props.onClearFailed()}
+              onClick={() => props.onClearErrors()}
             >
-              Remove all errors
+              Clear errors
             </Button>
             <Button size="xs" variant="light" onClick={() => props.onClearCompleted()}>
               Clear done
@@ -1560,7 +1578,7 @@ function PlaylistList(props: {
   );
 }
 
-function LogsPanel(props: { logs: LogsResponse | undefined }) {
+function LogsPanel(props: { logs: LogsResponse | undefined; onRefresh: () => void }) {
   const errorCount = props.logs?.entries.filter((entry) => entry.severity === "error").length ?? 0;
 
   return (
@@ -1573,9 +1591,19 @@ function LogsPanel(props: { logs: LogsResponse | undefined }) {
               Playback activity, commands, buffering, and failures from the last 24 hours.
             </Text>
           </Box>
-          <Badge color={errorCount ? "red" : "sage"} variant="light">
-            {errorCount} errors
-          </Badge>
+          <Group gap="xs">
+            <Badge color={errorCount ? "red" : "sage"} variant="light">
+              {errorCount} errors
+            </Badge>
+            <Button
+              leftSection={<IconRotateClockwise2 size={16} />}
+              size="xs"
+              variant="light"
+              onClick={props.onRefresh}
+            >
+              Load logs
+            </Button>
+          </Group>
         </Group>
 
         {props.logs?.entries.length ? (

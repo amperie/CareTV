@@ -304,6 +304,21 @@ export class QueueRepository {
     return ids.reduce((count, row) => count + this.deleteTerminal(row.id), 0);
   }
 
+  public clearErrors(): number {
+    const result = this.db
+      .prepare(
+        `
+          UPDATE queue_entries
+          SET last_error_code = NULL,
+              last_error_message = NULL
+          WHERE last_error_code IS NOT NULL OR last_error_message IS NOT NULL
+        `
+      )
+      .run();
+
+    return Number(result.changes);
+  }
+
   public move(id: string, direction: "up" | "down"): boolean {
     const current = this.get(id);
 
