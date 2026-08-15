@@ -459,34 +459,66 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
     return { error: "youtube-url-required" };
   }
 
-  const canonicalUrl = canonicalYouTubeUrl(url);
-  const now = new Date().toISOString();
-  const existing = media.getByServiceUrl("youtube", canonicalUrl);
-  const requestedDurationSeconds = optionalNumberField(body, "durationSeconds");
-  const item =
-    existing ??
-    ({
-      id: crypto.randomUUID(),
-      title: await titleForYouTubeUrl(canonicalUrl, stringOptional(body.title)),
-      service: "youtube",
-      mediaType: "video",
-      url: canonicalUrl,
-      enabled: true,
-      repeatable: true,
-      ...(requestedDurationSeconds ? { expectedDurationSeconds: requestedDurationSeconds } : {}),
-      metadata: { sourceUrl: canonicalUrl },
-      createdAt: now,
-      updatedAt: now
-    } satisfies MediaItem);
-  const entry = createQueueEntry(item.id);
+  const canonicalUrls = await canonicalYouTubeQueueUrls(url);
 
-  if (!existing) {
-    media.create(item);
+  if (!canonicalUrls.length) {
+    reply.code(422);
+    return { error: "youtube-episodes-not-found" };
   }
 
-  queue.enqueue(entry);
+  const now = new Date().toISOString();
+  const requestedDurationSeconds = optionalNumberField(body, "durationSeconds");
+  const items: MediaItem[] = [];
+  const entries: QueueEntry[] = [];
+  let duplicateCount = 0;
+
+  for (const canonicalUrl of canonicalUrls) {
+    const existing = media.getByServiceUrl("youtube", canonicalUrl);
+    let item =
+      existing ??
+      ({
+        id: crypto.randomUUID(),
+        title: await titleForYouTubeUrl(canonicalUrl, stringOptional(body.title)),
+        service: "youtube",
+        mediaType: "video",
+        url: canonicalUrl,
+        enabled: true,
+        repeatable: true,
+        ...(requestedDurationSeconds ? { expectedDurationSeconds: requestedDurationSeconds } : {}),
+        metadata: { sourceUrl: canonicalUrl },
+        createdAt: now,
+        updatedAt: now
+      } satisfies MediaItem);
+    const entry = createQueueEntry(item.id);
+
+    if (existing) {
+      duplicateCount += 1;
+      if (isGenericYouTubeTitle(existing.title)) {
+        const title = await titleForYouTubeUrl(canonicalUrl);
+        if (!isGenericYouTubeTitle(title)) {
+          item = { ...existing, title, updatedAt: now };
+          media.upsert(item);
+        }
+      }
+    } else {
+      media.create(item);
+    }
+
+    queue.enqueue(entry);
+    items.push(item);
+    entries.push(entry);
+  }
+
   reply.code(201);
-  return { item, entry, duplicate: Boolean(existing) };
+  return {
+    item: items[0],
+    entry: entries[0],
+    duplicate: duplicateCount > 0,
+    items,
+    entries,
+    queued: entries.length,
+    duplicates: duplicateCount
+  };
 });
 
 app.get("/api/v1/fallback/youtube", () => ({
@@ -1668,6 +1700,41 @@ async function titleForYouTubeUrl(url: string, fallback?: string): Promise<strin
   );
 }
 
+async function canonicalYouTubeQueueUrls(input: string): Promise<string[]> {
+  const canonicalUrl = canonicalYouTubeUrl(input);
+
+  if (youTubeVideoId(canonicalUrl)) {
+    return [canonicalUrl];
+  }
+
+  return isYouTubeShowUrl(input) ? fetchYouTubeShowEpisodeUrls(input) : [canonicalUrl];
+}
+
+async function fetchYouTubeShowEpisodeUrls(input: string): Promise<string[]> {
+  try {
+    const response = await fetch(input, {
+      headers: {
+        accept: "text/html",
+        "user-agent": "Mozilla/5.0 CareTV title resolver"
+      },
+      signal: AbortSignal.timeout(8000)
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const ids = [...(await response.text()).matchAll(/"videoId":"([\w-]{11})"|[?&]v=([\w-]{11})/g)]
+      .map((match) => match[1] ?? match[2])
+      .filter((id): id is string => Boolean(id));
+    return [...new Set(ids)].map(
+      (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`
+    );
+  } catch {
+    return [];
+  }
+}
+
 async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
   try {
     const endpoint = new URL("https://www.youtube.com/oembed");
@@ -1763,6 +1830,10 @@ function titleFromPrimeUrl(input: string): string {
   }
 }
 
+function isGenericYouTubeTitle(title: string): boolean {
+  return /^youtube video$/i.test(title.trim());
+}
+
 function isYouTubeUrl(input: string): boolean {
   try {
     const host = new URL(input).hostname.replace(/^www\./, "");
@@ -1774,9 +1845,7 @@ function isYouTubeUrl(input: string): boolean {
 
 function canonicalYouTubeUrl(input: string): string {
   const url = new URL(input);
-  const host = url.hostname.replace(/^www\./, "");
-  const videoId =
-    host === "youtu.be" ? url.pathname.split("/").filter(Boolean)[0] : url.searchParams.get("v");
+  const videoId = youTubeVideoId(input);
 
   if (!videoId) {
     url.hash = "";
@@ -1784,6 +1853,35 @@ function canonicalYouTubeUrl(input: string): string {
   }
 
   return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+}
+
+function youTubeVideoId(input: string): string | undefined {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, "");
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    const id =
+      host === "youtu.be"
+        ? pathParts[0]
+        : pathParts[0] === "shorts" || pathParts[0] === "embed"
+          ? pathParts[1]
+          : url.searchParams.get("v");
+    return id && /^[\w-]{11}$/.test(id) ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isYouTubeShowUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, "");
+    return (
+      (host === "youtube.com" || host === "m.youtube.com") && url.pathname.startsWith("/show/")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isMissingFileError(error: unknown): boolean {

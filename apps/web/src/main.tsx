@@ -172,16 +172,19 @@ function App() {
   const [streamingUrl, setStreamingUrl] = useState("");
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [uploading, setUploading] = useState(false);
+  const refreshSeq = useRef(0);
+  const logsRefreshSeq = useRef(0);
 
   async function refresh() {
-    const [mediaItems, playlistItems, playbackStatus, fallbackStatus, logsStatus] =
-      await Promise.all([
-        getJson<MediaItem[]>("/media"),
-        getJson<Playlist[]>("/playlists"),
-        getJson<PlaybackStatus>("/playback/status"),
-        getJson<FallbackResponse>("/fallback/youtube"),
-        getJson<LogsResponse>("/logs")
-      ]);
+    const seq = ++refreshSeq.current;
+    const [mediaItems, playlistItems, playbackStatus, fallbackStatus] = await Promise.all([
+      getJson<MediaItem[]>("/media"),
+      getJson<Playlist[]>("/playlists"),
+      getJson<PlaybackStatus>("/playback/status"),
+      getJson<FallbackResponse>("/fallback/youtube")
+    ]);
+
+    if (seq !== refreshSeq.current) return;
 
     if (Array.isArray(mediaItems)) {
       setMedia(mediaItems);
@@ -197,20 +200,29 @@ function App() {
       setStatus(playbackStatus);
     }
 
-    if (logsStatus) {
-      setLogs(logsStatus);
-    }
-
     if (fallbackStatus && !fallbackDirtyRef.current) {
       const currentMediaById = new Map((mediaItems ?? media).map((item) => [item.id, item]));
       setFallbackItems(fallbackItemsFromPlaylist(fallbackStatus.playlist, currentMediaById));
     }
   }
 
+  async function refreshLogs() {
+    const seq = ++logsRefreshSeq.current;
+    const logsStatus = await getJson<LogsResponse>("/logs");
+    if (seq === logsRefreshSeq.current && logsStatus) {
+      setLogs(logsStatus);
+    }
+  }
+
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 1000);
-    return () => window.clearInterval(timer);
+    void refreshLogs();
+    const refreshTimer = window.setInterval(() => void refresh(), 3000);
+    const logsTimer = window.setInterval(() => void refreshLogs(), 30000);
+    return () => {
+      window.clearInterval(refreshTimer);
+      window.clearInterval(logsTimer);
+    };
   }, []);
 
   const mediaById = useMemo(() => new Map(media.map((item) => [item.id, item])), [media]);
@@ -307,6 +319,7 @@ function App() {
     setQueueMessage("");
     try {
       await request(`/media/${mediaItemId}`, { method: "DELETE" });
+      removeMediaFromUi(mediaItemId);
     } catch {
       setQueueMessage("Stop playback before deleting the active media item.");
     }
@@ -533,6 +546,9 @@ function App() {
     setQueueMessage("");
     try {
       await request(`/queue/${id}`, { method: "DELETE" });
+      setStatus((current) =>
+        current ? { ...current, queue: current.queue.filter((entry) => entry.id !== id) } : current
+      );
       setQueueMessage("Queued item removed.");
     } catch {
       setQueueMessage("That queued item could not be removed.");
@@ -593,6 +609,9 @@ function App() {
     setQueueMessage("");
     try {
       await apiPost("/queue/clear-failed", {});
+      setStatus((current) =>
+        current ? { ...current, queue: current.queue.filter((entry) => entry.status !== "failed") } : current
+      );
       setQueueMessage("Failed queue items were cleared.");
     } catch {
       setQueueMessage("Failed items could not be cleared.");
@@ -610,6 +629,29 @@ function App() {
       return;
     }
     await refresh();
+  }
+
+  function removeMediaFromUi(mediaItemId: string) {
+    const item = media.find((candidate) => candidate.id === mediaItemId);
+    const ids = new Set(
+      item?.localPath
+        ? media.filter((candidate) => candidate.localPath === item.localPath).map(({ id }) => id)
+        : [mediaItemId]
+    );
+
+    setMedia((current) => current.filter((candidate) => !ids.has(candidate.id)));
+    setPlaylistMediaIds((current) => current.filter((id) => !ids.has(id)));
+    setPlaylists((current) =>
+      current.map((playlist) => ({
+        ...playlist,
+        items: playlist.items.filter((item) => !ids.has(item.mediaItemId))
+      }))
+    );
+    setStatus((current) =>
+      current
+        ? { ...current, queue: current.queue.filter((entry) => !ids.has(entry.mediaItemId)) }
+        : current
+    );
   }
 
   return (
@@ -956,11 +998,12 @@ function QueuePanel(props: {
             <Button
               color="red"
               disabled={failedCount === 0}
+              leftSection={<IconTrash size={16} />}
               size="xs"
               variant="light"
               onClick={() => props.onClearFailed()}
             >
-              Clear errors
+              Remove all errors
             </Button>
             <Button size="xs" variant="light" onClick={() => props.onClearCompleted()}>
               Clear done
@@ -1057,7 +1100,7 @@ function QueueRow(props: {
           #{props.entry.position}
         </Text>
         {props.entry.lastErrorCode ? (
-          <Text c="red" size="sm">
+          <Text c="red" lineClamp={2} mt={4} size="sm">
             {props.entry.lastErrorCode}
             {props.entry.lastErrorMessage ? `: ${props.entry.lastErrorMessage}` : ""}
           </Text>
@@ -1924,15 +1967,7 @@ function currentPlaybackIssue(
     return playbackIssueFor(stateError.code, stateError.message, media, active?.id);
   }
 
-  const failed = status?.queue.find((entry) => entry.status === "failed" && entry.lastErrorCode);
-  if (!failed?.lastErrorCode) return undefined;
-
-  return playbackIssueFor(
-    failed.lastErrorCode,
-    failed.lastErrorMessage ?? "Playback failed.",
-    mediaById.get(failed.mediaItemId),
-    failed.id
-  );
+  return undefined;
 }
 
 function playbackIssueFor(
