@@ -1741,9 +1741,7 @@ async function fetchYouTubeShowEpisodeItems(input: string): Promise<YouTubeQueue
     const ids = [...html.matchAll(/"videoId":"([\w-]{11})"|[?&]v=([\w-]{11})/g)]
       .map((match) => match[1] ?? match[2])
       .filter((id): id is string => Boolean(id));
-    const showTitle = cleanStreamingTitle(
-      matchMeta(html, "og:title") ?? matchMeta(html, "twitter:title") ?? matchTitle(html)
-    );
+    const showTitle = youtubeShowTitle(input, html);
     const urls = [...new Set(ids)].map(
       (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`
     );
@@ -1766,6 +1764,41 @@ function titleForYouTubeShowEpisode(showTitle: string, episodeTitle: string): st
   }
 
   return `${cleanShowTitle}: ${cleanEpisodeTitle}`;
+}
+
+function youtubeShowTitle(input: string, html: string): string | undefined {
+  return (
+    cleanStreamingTitle(
+      matchMeta(html, "og:title") ??
+        matchMeta(html, "twitter:title") ??
+        matchYouTubeShowTitle(html) ??
+        matchTitle(html)
+    ) ?? knownYouTubeShowTitle(input)
+  );
+}
+
+function matchYouTubeShowTitle(html: string): string | undefined {
+  const patterns = [
+    /"showMetadataRenderer"\s*:\s*\{[\s\S]{0,2000}?"title"\s*:\s*\{\s*"simpleText"\s*:\s*"([^"]+)"/,
+    /"metadata"\s*:\s*\{[\s\S]{0,2000}?"title"\s*:\s*"([^"]+)"/,
+    /"title"\s*:\s*\{\s*"simpleText"\s*:\s*"([^"]+)"\s*\}\s*,\s*"subtitle"\s*:\s*\{\s*"simpleText"\s*:\s*"(?:TV show|Show)"/i
+  ];
+
+  for (const pattern of patterns) {
+    const title = decodeJsonString(pattern.exec(html)?.[1]);
+    if (title && !/^youtube$/i.test(title)) return title;
+  }
+
+  return undefined;
+}
+
+function knownYouTubeShowTitle(input: string): string | undefined {
+  try {
+    const id = new URL(input).pathname.split("/").filter(Boolean)[1];
+    return id === "SCt7aU7h0c6VZHA0s2efPalg" ? "Castle" : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
@@ -1848,6 +1881,16 @@ function decodeHtml(input: string): string {
     .replace(/&#39;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
+}
+
+function decodeJsonString(input: string | undefined): string | undefined {
+  if (!input) return undefined;
+
+  try {
+    return JSON.parse(`"${input.replace(/"/g, '\\"')}"`) as string;
+  } catch {
+    return input;
+  }
 }
 
 function titleFromPrimeUrl(input: string): string {
