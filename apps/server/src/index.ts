@@ -1725,9 +1725,10 @@ async function canonicalYouTubeQueueItems(input: string): Promise<YouTubeQueueIt
 
 async function fetchYouTubeShowEpisodeItems(input: string): Promise<YouTubeQueueItems> {
   try {
-    const response = await fetch(input, {
+    const response = await fetch(youtubeUsEnglishUrl(input), {
       headers: {
         accept: "text/html",
+        "accept-language": "en-US,en;q=0.9",
         "user-agent": "Mozilla/5.0 CareTV title resolver"
       },
       signal: AbortSignal.timeout(8000)
@@ -1840,10 +1841,10 @@ function knownYouTubeShowTitle(input: string): string | undefined {
 async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
   try {
     const endpoint = new URL("https://www.youtube.com/oembed");
-    endpoint.searchParams.set("url", url);
+    endpoint.searchParams.set("url", youtubeUsEnglishUrl(url));
     endpoint.searchParams.set("format", "json");
     const response = await fetch(endpoint, {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", "accept-language": "en-US,en;q=0.9" },
       signal: AbortSignal.timeout(5000)
     });
 
@@ -1855,6 +1856,22 @@ async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
     return typeof body.title === "string" && body.title.trim() ? body.title.trim() : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function youtubeUsEnglishUrl(input: string): string {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, "");
+
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be") {
+      url.searchParams.set("hl", "en");
+      url.searchParams.set("gl", "US");
+    }
+
+    return url.href;
+  } catch {
+    return input;
   }
 }
 
@@ -1996,6 +2013,8 @@ function canonicalYouTubePlaybackUrl(input: string): string {
   url.hostname = "www.youtube.com";
   url.pathname = "/watch";
   url.searchParams.set("v", videoId);
+  url.searchParams.set("hl", "en");
+  url.searchParams.set("gl", "US");
   url.searchParams.delete("t");
   url.searchParams.delete("start");
   url.searchParams.delete("time_continue");
