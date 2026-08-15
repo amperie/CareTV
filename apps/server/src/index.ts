@@ -1738,17 +1738,53 @@ async function fetchYouTubeShowEpisodeItems(input: string): Promise<YouTubeQueue
     }
 
     const html = await response.text();
-    const ids = [...html.matchAll(/"videoId":"([\w-]{11})"|[?&]v=([\w-]{11})/g)]
-      .map((match) => match[1] ?? match[2])
-      .filter((id): id is string => Boolean(id));
     const showTitle = youtubeShowTitle(input, html);
-    const urls = [...new Set(ids)].map(
-      (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`
-    );
+    const urls = youTubeWatchUrlsFromHtml(html);
     return { ...(showTitle ? { showTitle } : {}), urls };
   } catch {
     return { urls: [] };
   }
+}
+
+function youTubeWatchUrlsFromHtml(html: string): string[] {
+  const urls = [
+    ...html.matchAll(/"url"\s*:\s*"(\/watch\?[^"]*?v=[\w-]{11}[^"]*)"/g),
+    ...html.matchAll(/href=["'](\/watch\?[^"']*?v=[\w-]{11}[^"']*)["']/g)
+  ]
+    .map((match) => match[1])
+    .filter((url): url is string => Boolean(url))
+    .map((url) => decodeJsonString(decodeHtml(url)))
+    .filter((url): url is string => Boolean(url))
+    .map((url) => canonicalYouTubePlaybackUrl(`https://www.youtube.com${url}`));
+
+  if (urls.length) {
+    return uniqueYouTubeUrlsByVideoId(urls);
+  }
+
+  return youTubeVideoIdsFromHtml(html).map(
+    (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`
+  );
+}
+
+function youTubeVideoIdsFromHtml(html: string): string[] {
+  const ids = [...html.matchAll(/"videoId":"([\w-]{11})"|[?&]v=([\w-]{11})/g)]
+    .map((match) => match[1] ?? match[2])
+    .filter((id): id is string => Boolean(id));
+  return [...new Set(ids)];
+}
+
+function uniqueYouTubeUrlsByVideoId(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const url of urls) {
+    const id = youTubeVideoId(url);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(url);
+  }
+
+  return unique;
 }
 
 function titleForYouTubeShowEpisode(showTitle: string, episodeTitle: string): string {
@@ -1946,6 +1982,25 @@ function canonicalYouTubeUrl(input: string): string {
   }
 
   return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+}
+
+function canonicalYouTubePlaybackUrl(input: string): string {
+  const url = new URL(input);
+  const videoId = youTubeVideoId(input);
+
+  if (!videoId) {
+    url.hash = "";
+    return url.href;
+  }
+
+  url.hostname = "www.youtube.com";
+  url.pathname = "/watch";
+  url.searchParams.set("v", videoId);
+  url.searchParams.delete("t");
+  url.searchParams.delete("start");
+  url.searchParams.delete("time_continue");
+  url.hash = "";
+  return url.href;
 }
 
 function youTubeVideoId(input: string): string | undefined {

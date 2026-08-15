@@ -38,6 +38,23 @@ describe("youtube video adapter", () => {
     expect(page.pressKeyCount).toBe(0);
   });
 
+  it("preserves YouTube watch context while starting from the beginning", async () => {
+    const page = new FakeBrowserPage();
+    let openedUrl = "";
+    const adapter = new YouTubeVideoAdapter({
+      openPage: (url) => {
+        openedUrl = url;
+        return Promise.resolve(page);
+      }
+    });
+    const context = youtubeContext("https://www.youtube.com/watch?v=abc123&pp=show-context&t=85");
+
+    await adapter.prepare(context);
+    await adapter.start(context);
+
+    expect(openedUrl).toBe("https://www.youtube.com/watch?v=abc123&pp=show-context&start=0");
+  });
+
   it("does not toggle fullscreen off when called repeatedly", async () => {
     const page = new FakeBrowserPage();
     const adapter = new YouTubeVideoAdapter({

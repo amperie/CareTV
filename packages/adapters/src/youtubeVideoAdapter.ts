@@ -279,7 +279,14 @@ function normalizeYouTubeUrl(input: string): string {
   const id = youTubeVideoId(input);
 
   if (id) {
-    return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}&start=0`;
+    url.hostname = "www.youtube.com";
+    url.pathname = "/watch";
+    url.searchParams.set("v", id);
+    url.searchParams.delete("t");
+    url.searchParams.delete("time_continue");
+    url.searchParams.set("start", "0");
+    url.hash = "";
+    return url.href;
   }
 
   url.hash = "";
