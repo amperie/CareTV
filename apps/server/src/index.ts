@@ -459,9 +459,9 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
     return { error: "youtube-url-required" };
   }
 
-  const canonicalUrls = await canonicalYouTubeQueueUrls(url);
+  const youtubeQueue = await canonicalYouTubeQueueItems(url);
 
-  if (!canonicalUrls.length) {
+  if (!youtubeQueue.urls.length) {
     reply.code(422);
     return { error: "youtube-episodes-not-found" };
   }
@@ -472,13 +472,17 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
   const entries: QueueEntry[] = [];
   let duplicateCount = 0;
 
-  for (const canonicalUrl of canonicalUrls) {
+  for (const canonicalUrl of youtubeQueue.urls) {
     const existing = media.getByServiceUrl("youtube", canonicalUrl);
+    const title = await titleForYouTubeUrl(canonicalUrl, stringOptional(body.title));
+    const showTitle = youtubeQueue.showTitle
+      ? titleForYouTubeShowEpisode(youtubeQueue.showTitle, title)
+      : title;
     let item =
       existing ??
       ({
         id: crypto.randomUUID(),
-        title: await titleForYouTubeUrl(canonicalUrl, stringOptional(body.title)),
+        title: showTitle,
         service: "youtube",
         mediaType: "video",
         url: canonicalUrl,
@@ -493,12 +497,9 @@ app.post("/api/v1/youtube-queue", async (request, reply) => {
 
     if (existing) {
       duplicateCount += 1;
-      if (isGenericYouTubeTitle(existing.title)) {
-        const title = await titleForYouTubeUrl(canonicalUrl);
-        if (!isGenericYouTubeTitle(title)) {
-          item = { ...existing, title, updatedAt: now };
-          media.upsert(item);
-        }
+      if (shouldUpdateYouTubeTitle(existing.title, showTitle, youtubeQueue.showTitle)) {
+        item = { ...existing, title: showTitle, updatedAt: now };
+        media.upsert(item);
       }
     } else {
       media.create(item);
@@ -1700,17 +1701,22 @@ async function titleForYouTubeUrl(url: string, fallback?: string): Promise<strin
   );
 }
 
-async function canonicalYouTubeQueueUrls(input: string): Promise<string[]> {
+interface YouTubeQueueItems {
+  showTitle?: string;
+  urls: string[];
+}
+
+async function canonicalYouTubeQueueItems(input: string): Promise<YouTubeQueueItems> {
   const canonicalUrl = canonicalYouTubeUrl(input);
 
   if (youTubeVideoId(canonicalUrl)) {
-    return [canonicalUrl];
+    return { urls: [canonicalUrl] };
   }
 
-  return isYouTubeShowUrl(input) ? fetchYouTubeShowEpisodeUrls(input) : [canonicalUrl];
+  return isYouTubeShowUrl(input) ? fetchYouTubeShowEpisodeItems(input) : { urls: [canonicalUrl] };
 }
 
-async function fetchYouTubeShowEpisodeUrls(input: string): Promise<string[]> {
+async function fetchYouTubeShowEpisodeItems(input: string): Promise<YouTubeQueueItems> {
   try {
     const response = await fetch(input, {
       headers: {
@@ -1721,18 +1727,38 @@ async function fetchYouTubeShowEpisodeUrls(input: string): Promise<string[]> {
     });
 
     if (!response.ok) {
-      return [];
+      return { urls: [] };
     }
 
-    const ids = [...(await response.text()).matchAll(/"videoId":"([\w-]{11})"|[?&]v=([\w-]{11})/g)]
+    const html = await response.text();
+    const ids = [...html.matchAll(/"videoId":"([\w-]{11})"|[?&]v=([\w-]{11})/g)]
       .map((match) => match[1] ?? match[2])
       .filter((id): id is string => Boolean(id));
-    return [...new Set(ids)].map(
+    const showTitle = cleanStreamingTitle(
+      matchMeta(html, "og:title") ?? matchMeta(html, "twitter:title") ?? matchTitle(html)
+    );
+    const urls = [...new Set(ids)].map(
       (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`
     );
+    return { ...(showTitle ? { showTitle } : {}), urls };
   } catch {
-    return [];
+    return { urls: [] };
   }
+}
+
+function titleForYouTubeShowEpisode(showTitle: string, episodeTitle: string): string {
+  const cleanShowTitle = showTitle.trim();
+  const cleanEpisodeTitle = episodeTitle.trim();
+
+  if (
+    !cleanShowTitle ||
+    cleanEpisodeTitle.toLowerCase().startsWith(`${cleanShowTitle.toLowerCase()}:`) ||
+    cleanEpisodeTitle.toLowerCase().startsWith(`${cleanShowTitle.toLowerCase()} -`)
+  ) {
+    return cleanEpisodeTitle;
+  }
+
+  return `${cleanShowTitle}: ${cleanEpisodeTitle}`;
 }
 
 async function fetchYouTubeTitle(url: string): Promise<string | undefined> {
@@ -1832,6 +1858,23 @@ function titleFromPrimeUrl(input: string): string {
 
 function isGenericYouTubeTitle(title: string): boolean {
   return /^youtube video$/i.test(title.trim());
+}
+
+function shouldUpdateYouTubeTitle(
+  currentTitle: string,
+  nextTitle: string,
+  showTitle: string | undefined
+): boolean {
+  if (isGenericYouTubeTitle(currentTitle)) {
+    return !isGenericYouTubeTitle(nextTitle);
+  }
+
+  return Boolean(
+    showTitle &&
+      currentTitle.trim() !== nextTitle.trim() &&
+      !currentTitle.toLowerCase().startsWith(`${showTitle.toLowerCase()}:`) &&
+      !currentTitle.toLowerCase().startsWith(`${showTitle.toLowerCase()} -`)
+  );
 }
 
 function isYouTubeUrl(input: string): boolean {
