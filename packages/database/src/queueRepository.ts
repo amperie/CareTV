@@ -197,72 +197,39 @@ export class QueueRepository {
   }
 
   public requeueCompleted(id: string): boolean {
-    const result = this.db
-      .prepare(
-        `
-          UPDATE queue_entries
-          SET status = 'queued',
-              priority = 0,
-              started_at = NULL,
-              completed_at = NULL,
-              last_error_code = NULL,
-              last_error_message = NULL
-          WHERE id = ? AND status IN ('completed', 'failed', 'skipped')
-        `
-      )
-      .run(id);
-
-    return Number(result.changes) > 0;
+    return this.requeueWhere("id = ? AND status IN ('completed', 'failed', 'skipped')", [id]) > 0;
   }
 
   public requeueCompletedEntries(): number {
-    const result = this.db
-      .prepare(
-        `
-          UPDATE queue_entries
-          SET status = 'queued',
-              priority = 0,
-              started_at = NULL,
-              completed_at = NULL,
-              last_error_code = NULL,
-              last_error_message = NULL
-          WHERE status IN ('completed', 'skipped')
-             OR (
-              status = 'failed'
-              AND attempt_count < 2
-              AND (
-                last_error_code IS NULL
-                OR last_error_code NOT IN (
-                  'adapter-not-found',
-                  'media-not-found',
-                  'youtube-age-verification-required',
-                  'youtube-consent-required',
-                  'youtube-private',
-                  'youtube-signin-required',
-                  'youtube-unavailable',
-                  'youtube-verification-required'
-                )
-              )
+    return this.requeueWhere(
+      `
+        status IN ('completed', 'skipped')
+        OR (
+          status = 'failed'
+          AND attempt_count < 2
+          AND (
+            last_error_code IS NULL
+            OR last_error_code NOT IN (
+              'adapter-not-found',
+              'media-not-found',
+              'youtube-age-verification-required',
+              'youtube-consent-required',
+              'youtube-private',
+              'youtube-signin-required',
+              'youtube-unavailable',
+              'youtube-verification-required'
             )
-        `
-      )
-      .run();
-
-    return Number(result.changes);
+          )
+        )
+      `,
+      []
+    );
   }
 
   public requeueRecoverableFailures(): number {
-    const result = this.db
-      .prepare(
-        `
-          UPDATE queue_entries
-          SET status = 'queued',
-              priority = 0,
-              started_at = NULL,
-              completed_at = NULL,
-              last_error_code = NULL,
-              last_error_message = NULL
-          WHERE status = 'failed'
+    return this.requeueWhere(
+      `
+        status = 'failed'
             AND (
               last_error_code IN (
                 'agent-error',
@@ -279,11 +246,9 @@ export class QueueRepository {
               OR last_error_message LIKE '%operation was aborted%'
               OR last_error_message LIKE '%browser-page-closed%'
             )
-        `
-      )
-      .run();
-
-    return Number(result.changes);
+      `,
+      []
+    );
   }
 
   public clearCompleted(): number {
@@ -556,6 +521,60 @@ export class QueueRepository {
       .get(id) as { count: number } | undefined;
 
     return row?.count ?? 0;
+  }
+
+  private requeueWhere(where: string, params: string[]): number {
+    const rows = this.db
+      .prepare(`SELECT * FROM queue_entries WHERE ${where} ORDER BY position ASC, started_at ASC`)
+      .all(...params) as unknown as QueueRow[];
+
+    if (rows.length === 0) {
+      return 0;
+    }
+
+    const used = new Set(
+      (
+        this.db
+          .prepare("SELECT position FROM queue_entries WHERE status = 'queued'")
+          .all() as { position: number }[]
+      ).map((row) => row.position)
+    );
+    let next = this.nextPosition();
+
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      for (const [index, row] of rows.entries()) {
+        this.db
+          .prepare("UPDATE queue_entries SET position = ? WHERE id = ?")
+          .run(-index - 1, row.id);
+      }
+
+      for (const row of rows) {
+        const position = used.has(row.position) ? next++ : row.position;
+        used.add(position);
+        this.db
+          .prepare(
+            `
+              UPDATE queue_entries
+              SET status = 'queued',
+                  priority = 0,
+                  position = ?,
+                  started_at = NULL,
+                  completed_at = NULL,
+                  last_error_code = NULL,
+                  last_error_message = NULL
+              WHERE id = ?
+            `
+          )
+          .run(position, row.id);
+      }
+
+      this.db.exec("COMMIT;");
+      return rows.length;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   private deleteTerminal(id: string): number {

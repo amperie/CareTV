@@ -361,6 +361,27 @@ describe("database repositories", () => {
     });
   });
 
+  it("requeues terminal entries without colliding with queued positions", () => {
+    withMigratedDatabase((db) => {
+      const media = new MediaRepository(db);
+      const queue = new QueueRepository(db);
+
+      media.create(fakeMedia("media-1"));
+      queue.enqueue({
+        ...fakeQueueEntry("completed", "media-1", 1),
+        status: "completed",
+        completedAt: now
+      });
+      queue.enqueue(fakeQueueEntry("queued", "media-1", 1));
+
+      expect(queue.requeueCompletedEntries()).toBe(1);
+      expect(queue.list()).toMatchObject([
+        { id: "queued", status: "queued", position: 1 },
+        { id: "completed", status: "queued", position: 2 }
+      ]);
+    });
+  });
+
   it("requeues recoverable failures regardless of attempt count", () => {
     withMigratedDatabase((db) => {
       const media = new MediaRepository(db);

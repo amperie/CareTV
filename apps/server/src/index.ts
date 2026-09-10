@@ -1102,10 +1102,12 @@ app.post("/api/v1/appliance/events", (request, reply) => {
 
   const queueEntryId = stringOptional(body.queueEntryId);
   const mediaItemId = stringOptional(body.mediaItemId);
+  const eventQueueEntryId = queueEntryId && queue.get(queueEntryId) ? queueEntryId : undefined;
+  const eventMediaItemId = mediaItemId && media.get(mediaItemId) ? mediaItemId : undefined;
   const event = {
     id: stringField(body, "id", crypto.randomUUID()),
-    ...(queueEntryId ? { queueEntryId } : {}),
-    ...(mediaItemId ? { mediaItemId } : {}),
+    ...(eventQueueEntryId ? { queueEntryId: eventQueueEntryId } : {}),
+    ...(eventMediaItemId ? { mediaItemId: eventMediaItemId } : {}),
     type,
     details: objectField(body.details),
     createdAt: stringField(body, "createdAt", new Date().toISOString())

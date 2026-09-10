@@ -20,7 +20,7 @@ export class PlaybackEventRepository {
     this.db
       .prepare(
         `
-          INSERT INTO playback_events (
+          INSERT OR IGNORE INTO playback_events (
             id, queue_entry_id, media_item_id, type, message, details_json, created_at
           )
           VALUES (?, ?, ?, ?, ?, ?, ?)
